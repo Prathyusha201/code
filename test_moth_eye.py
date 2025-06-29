@@ -56,7 +56,7 @@ def test_reflectance():
     print(f"Weighted reflectance: {R_weighted*100:.2f}%")
     
     # Verify weighted reflectance is within reasonable range
-    assert 0.01 <= R_weighted <= 0.30, f"Weighted reflectance {R_weighted:.6f} outside reasonable range"
+    assert 0.001 <= R_weighted <= 0.05, f"Weighted reflectance {R_weighted:.6f} outside reasonable range for moth-eye structure"
     print("✓ Weighted reflectance test passed")
     
     print("\n=== Testing Traditional Coatings ===")

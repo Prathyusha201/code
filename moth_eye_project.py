@@ -1693,6 +1693,61 @@ class MothEyeSimulator:
         plt.savefig(save_path)
         plt.close()
 
+    def plot_3d_reflectance_surface(self, param1='height', param2='period', fixed_params=None, save_path='results/3d_reflectance_surface.png'):
+        """Plot a 3D surface of reflectance as a function of two parameters (e.g., height and period)."""
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D
+        import numpy as np
+        param1_vals = np.linspace(self.params[param1]*0.5, self.params[param1]*1.5, 30)
+        param2_vals = np.linspace(self.params[param2]*0.5, self.params[param2]*1.5, 30)
+        Z = np.zeros((len(param1_vals), len(param2_vals)))
+        for i, v1 in enumerate(param1_vals):
+            for j, v2 in enumerate(param2_vals):
+                params = fixed_params.copy() if fixed_params else self.params.copy()
+                params[param1] = v1
+                params[param2] = v2
+                Z[i, j] = self.weighted_reflectance(params)
+        X, Y = np.meshgrid(param2_vals*1e9, param1_vals*1e9)
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(111, projection='3d')
+        surf = ax.plot_surface(X, Y, Z*100, cmap='viridis', edgecolor='none', alpha=0.9)
+        ax.set_xlabel(f'{param2} (nm)')
+        ax.set_ylabel(f'{param1} (nm)')
+        ax.set_zlabel('Reflectance (%)')
+        ax.set_title(f'3D Surface: Reflectance vs. {param1} and {param2}')
+        fig.colorbar(surf, shrink=0.5, aspect=10, label='Reflectance (%)')
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close(fig)
+
+    def plot_parallel_coordinates(self, save_path='results/parallel_coordinates.png'):
+        """Plot a parallel coordinates plot for all optimized parameter sets."""
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        from pandas.plotting import parallel_coordinates
+        if not self.optimization_history:
+            return
+        param_names = ['height', 'period', 'base_width', 'rms_roughness', 'interface_roughness', 'refractive_index', 'extinction_coefficient', 'substrate_index']
+        data = []
+        for h in self.optimization_history:
+            row = [h['params'][p] for p in param_names]
+            row.append(h['reflectance']*100)
+            data.append(row)
+        df = pd.DataFrame(data, columns=param_names + ['Reflectance (%)'])
+        # Normalize for better visualization
+        df_norm = (df - df.min()) / (df.max() - df.min())
+        df_norm['Reflectance (%)'] = df['Reflectance (%)']
+        df_norm['label'] = (df['Reflectance (%)'] == df['Reflectance (%)'].min()).astype(int)
+        plt.figure(figsize=(12, 6))
+        parallel_coordinates(df_norm, 'label', color=['#1f77b4', '#d62728'], alpha=0.7)
+        plt.title('Parallel Coordinates: Optimized Parameter Sets')
+        plt.xlabel('Parameter')
+        plt.ylabel('Normalized Value')
+        plt.legend(['Other', 'Best Reflectance'], loc='upper right')
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
+
 # --- Unit Test Hooks ---
 def test_effective_index():
     sim = MothEyeSimulator()
@@ -1900,6 +1955,17 @@ def main():
         # After optimization and before report generation, add:
         # Plot sensitivity heatmap for best profile
         sim.plot_sensitivity_heatmap(param1='height', param2='period', fixed_params=best_profile[1]['parameters'], save_path='results/sensitivity_heatmap.png')
+        
+        # 3D surface for best profile (height vs period)
+        try:
+            sim.plot_3d_reflectance_surface(param1='height', param2='period', fixed_params=best_profile[1]['parameters'], save_path='results/3d_reflectance_surface.png')
+        except Exception as e:
+            logger.error(f"Error generating 3D reflectance surface: {str(e)}")
+        # Parallel coordinates for all optimized sets
+        try:
+            sim.plot_parallel_coordinates(save_path='results/parallel_coordinates.png')
+        except Exception as e:
+            logger.error(f"Error generating parallel coordinates plot: {str(e)}")
         
     else:
         # Optimize single profile
