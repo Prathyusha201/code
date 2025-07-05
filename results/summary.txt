@@ -2,17 +2,15 @@
 ======================================================================
 
 ## Input Parameters
-  height              : 346.78 nm
-  period              : 270.01 nm
-  base_width          : 205.51 nm
-  rms_roughness       : 2.13 nm
-  interface_roughness : 3.59 nm
-  refractive_index    : 1.5629
-  extinction_coefficient: 3.64 mm
-  substrate_index     : 3.4355
+  height              : 300.00 nm
+  period              : 250.00 nm
+  base_width          : 200.00 nm
   profile_type        : parabolic
-  manufacturing_method: Interference lithography or soft lithography (cost-effective for large area)
-  manufacturing_yield : 93.0331
+  rms_roughness       : 5.00 nm
+  interface_roughness : 2.00 nm
+  refractive_index    : 1.5000
+  extinction_coefficient: 1.00 mm
+  substrate_index     : 3.5000
 
 ## Parameter Bounds
   height              : 200.00 nm to 600.00 nm

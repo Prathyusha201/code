@@ -1372,7 +1372,7 @@ class MothEyeSimulator:
         ax.set_title('3D View of Best Moth-Eye Structure')
         return fig
 
-    def generate_txt_summary(self, best_params, best_R, bounds, assumptions, results, moth_eye_params=None, traditional_params=None):
+    def generate_txt_summary(self, best_params, best_R, bounds, assumptions, results, moth_eye_params=None, traditional_params=None, input_params=None):
         """Generate a well-formatted plain text summary file with all required information, including a parameter comparison table."""
         ensure_dir('results')
         import textwrap
@@ -1388,11 +1388,22 @@ class MothEyeSimulator:
                 else:
                     return f"{val:.4f}"
             return str(val)
+        
+        # Use input_params if provided, otherwise use default parameters
+        if input_params is None:
+            input_params = {
+                'height': nm(300), 'period': nm(250), 'base_width': nm(200),
+                'profile_type': 'parabolic',
+                'rms_roughness': nm(5), 'interface_roughness': nm(2),
+                'refractive_index': 1.5, 'extinction_coefficient': 0.001,
+                'substrate_index': 3.5,  # Silicon
+            }
+        
         with open('results/summary.txt', 'w') as f:
             f.write("# Moth-Eye Anti-Reflection Coating Simulation Summary\n")
             f.write("="*70 + "\n\n")
             f.write("## Input Parameters\n")
-            for k, v in best_params.items():
+            for k, v in input_params.items():
                 f.write(f"  {k:<20}: {fmt_val(v)}\n")
             f.write("\n## Parameter Bounds\n")
             for k, (low, high) in bounds.items():
@@ -1827,7 +1838,15 @@ def main():
         'Best Reflectance (%)': best_profile[1]['reflectance']*100,
         'Parameters': str(best_profile[1]['parameters'])
     }
-    sim.generate_txt_summary(best_profile[1]['parameters'], best_profile[1]['reflectance'], bounds, assumptions, results_txt)
+    # Get the default input parameters
+    input_params = {
+        'height': nm(300), 'period': nm(250), 'base_width': nm(200),
+        'profile_type': 'parabolic',
+        'rms_roughness': nm(5), 'interface_roughness': nm(2),
+        'refractive_index': 1.5, 'extinction_coefficient': 0.001,
+        'substrate_index': 3.5,  # Silicon
+    }
+    sim.generate_txt_summary(best_profile[1]['parameters'], best_profile[1]['reflectance'], bounds, assumptions, results_txt, input_params=input_params)
     # In the main workflow, after all profiles are optimized, print a summary of reflectance values for all profiles
     print("\nReflectance summary for all profiles:")
     for profile, result in results.items():
@@ -1864,7 +1883,7 @@ def main():
         'Scalability': 6,
         'Material Usage (a.u.)': 0.8
     }
-    sim.generate_txt_summary(best_profile[1]['parameters'], best_profile[1]['reflectance'], bounds, assumptions, results_txt, moth_eye_params=moth_eye_params, traditional_params=traditional_params)
+    sim.generate_txt_summary(best_profile[1]['parameters'], best_profile[1]['reflectance'], bounds, assumptions, results_txt, moth_eye_params=moth_eye_params, traditional_params=traditional_params, input_params=input_params)
     # Plot sensitivity heatmap for best profile
     sim.plot_sensitivity_heatmap(param1='height', param2='period', fixed_params=best_profile[1]['parameters'], save_path='results/sensitivity_heatmap.png')
     # 3D surface for best profile (height vs period)
