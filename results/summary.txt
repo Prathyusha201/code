@@ -39,7 +39,7 @@
 
 ## Results
   Best Profile        : parabolic
-  Best Reflectance (%) : 0.003
+  Best Reflectance (%) : 0.26
   Parameters:
     - height              : 346.78 nm
     - period              : 270.01 nm
@@ -75,5 +75,3 @@ All graphs and detailed reports are saved in the 'results' folder as images.
 | Scalability                    | 6                     | 8                     |
 | Material Usage (a.u.)          | 0.80                  | 1                     |
 +-------------------------------+----------------------+----------------------+
-
-Note: Environmental effects (e.g., humidity, UV, dust) are included in calculations but not visualized as error bars. For future work, consider adding error bars or shaded regions to reflect real-world variability.

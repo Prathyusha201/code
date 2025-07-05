@@ -31,17 +31,12 @@ Run the main simulation and optimization:
 python moth_eye_project.py
 ```
 This will:
-1. Initialize the simulator with default or user-specified parameters
+1. Initialize the simulator with default parameters
 2. Run multi-profile optimization (parabolic, conical, gaussian, quintic)
 3. Generate performance and manufacturing analysis
 4. Create publication-ready plots and reports in the `results/` directory
 
-### CLI and Notebook Usage
-- For command-line options and advanced workflows:
-```bash
-python moth_eye_project.py --help
-```
-- For interactive exploration, use the provided Jupyter notebook (if available).
+**Note:** All results are generated automatically. No user input is required.
 
 ### Testing
 Run the test suite to verify core simulation and optimization routines:
@@ -63,11 +58,17 @@ python test_moth_eye.py
 
 ## References
 
-1. Khezripour et al. (2018) - Particle swarm optimization methodology
-2. Sun et al. (2008) - Rigorous coupled-wave analysis implementation
-3. Dong et al. (2015) - Parametric analysis framework
-4. Yuan et al. (2014) - Material interface modeling
-5. Palik, Handbook of Optical Constants of Solids
+- Khezripour et al. (2018)
+- Sun et al. (2008)
+- Dong et al. (2015)
+- Kubota et al. (2014)
+- Xu et al. (2014)
+- Yuan et al. (2014)
+- Papatzacos et al. (2024)
+- Tommila et al. (2012)
+- Tan et al. (2017)
+- Yamada et al. (2011)
+- Palik, Handbook of Optical Constants of Solids
 
 ## Author
 

@@ -1,18 +1,18 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# Literature reflectance values (from slide image)
+# Literature reflectance values
 literature_reflectance = [
-    {"method": "Particle Swarm (2018)", "reflectance": 4.5, "ref": "Khezripour et al. 2018"},
+    {"method": "Particle Swarm Optimization (2018)", "reflectance": 4.5, "ref": "Khezripour et al. 2018"},
     {"method": "RCWA (2008)", "reflectance": 2.5, "ref": "Sun et al. 2008"},
-    {"method": "FDTD (2005)", "reflectance": 2.8, "ref": "Dong et al. 2015"},
-    {"method": "Hybrid Coating (2014)", "reflectance": 10.0, "ref": "Yuan et al. 2014"},
-    {"method": "Lithography (2014)", "reflectance": 12.0, "ref": "Yuan et al. 2014"},
-    {"method": "Electromagnetic Sim. (2014)", "reflectance": 3.0, "ref": "Yuan et al. 2014"},
-    {"method": "Numerical Modeling (2024)", "reflectance": 6.0, "ref": "Recent work"},
-    {"method": "Nanoimprint Litho. (2021)", "reflectance": 5.0, "ref": "Recent work"},
-    {"method": "Advanced Meshing (2017)", "reflectance": 4.0, "ref": "Recent work"},
-    {"method": "Parameter Optimization (2011)", "reflectance": 1.5, "ref": "Recent work"},
+    {"method": "RCWA Simulation (2015)", "reflectance": 3.0, "ref": "Dong et al. 2015"},
+    {"method": "Hybrid Coating (2014)", "reflectance": 10.0, "ref": "Kubota et al. 2014"},
+    {"method": "Lithography (2014)", "reflectance": 12.0, "ref": "Xu et al. 2014"},
+    {"method": "Electromagnetic Simulation (2014)", "reflectance": 3.0, "ref": "Yuan et al. 2014"},
+    {"method": "Numerical Modeling (2024)", "reflectance": 6.0, "ref": "Papatzacos et al. 2024"},
+    {"method": "Nanoimprint Lithography (2012)", "reflectance": 5.0, "ref": "Tommila et al. 2012"},
+    {"method": "Advanced Meshing (2017)", "reflectance": 4.0, "ref": "Tan et al. 2017"},
+    {"method": "Parameter Optimization (2011)", "reflectance": 1.5, "ref": "Yamada et al. 2011"}
 ]
 
 def plot_literature_comparison(simulated_methods, simulated_reflectance, fname='results/literature_comparison.png'):

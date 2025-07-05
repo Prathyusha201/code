@@ -1,5 +1,6 @@
 from moth_eye_project import MothEyeSimulator, nm
 import numpy as np
+import os
 
 def test_reflectance():
     sim = MothEyeSimulator()
@@ -31,7 +32,7 @@ def test_reflectance():
     }
     
     print("\n=== Testing Flat Interface ===")
-    R_flat = sim.reflectance(params_flat, debug=True)
+    R_flat = sim.reflectance(params_flat)
     R_flat_val = float(R_flat) if np.isscalar(R_flat) or R_flat.size == 1 else float(R_flat[0])
     print(f"Flat interface reflectance: {R_flat_val*100:.2f}%")
     
@@ -43,7 +44,7 @@ def test_reflectance():
     print("✓ Flat interface test passed")
     
     print("\n=== Testing Moth-Eye Structure ===")
-    R_moth_eye = sim.reflectance(params_moth_eye, debug=True)
+    R_moth_eye = sim.reflectance(params_moth_eye)
     R_moth_eye_val = float(R_moth_eye) if np.isscalar(R_moth_eye) or R_moth_eye.size == 1 else float(R_moth_eye[0])
     print(f"Moth-eye reflectance: {R_moth_eye_val*100:.2f}%")
     
@@ -52,7 +53,7 @@ def test_reflectance():
     print("✓ Moth-eye reflectance test passed")
     
     print("\n=== Testing Weighted Reflectance ===")
-    R_weighted = sim.weighted_reflectance(params_moth_eye, debug=True)
+    R_weighted = sim.weighted_reflectance(params_moth_eye)
     print(f"Weighted reflectance: {R_weighted*100:.2f}%")
     
     # Verify weighted reflectance is within reasonable range
@@ -72,6 +73,56 @@ def test_reflectance():
     assert R_gradient < R_single, "Gradient-index should have lower reflectance than single-layer"
     print("✓ Traditional coatings test passed")
     
+    print("\n=== Testing All Profile Types ===")
+    profiles = ['parabolic', 'conical', 'gaussian', 'quintic']
+    for profile in profiles:
+        params = params_moth_eye.copy()
+        params['profile_type'] = profile
+        R = sim.reflectance(params)
+        R_val = float(R) if np.isscalar(R) or getattr(R, 'size', 1) == 1 else float(R[0])
+        assert R_val < R_flat_val, f"{profile} should have lower reflectance than flat interface"
+        print(f"✓ {profile.capitalize()} profile test passed: {R_val*100:.2f}%")
+
+    print("\n=== Edge Case Tests ===")
+    # Negative height (unphysical)
+    params_bad = params_moth_eye.copy()
+    params_bad['height'] = -nm(100)
+    try:
+        R_bad = sim.reflectance(params_bad)
+        print(f"Warning: Negative height did not raise error, got R={R_bad}")
+    except Exception as e:
+        print(f"✓ Negative height correctly raised error: {e}")
+    # Extremely high refractive index
+    params_high_n = params_moth_eye.copy()
+    params_high_n['refractive_index'] = 10.0
+    try:
+        R_high_n = sim.reflectance(params_high_n)
+        print(f"✓ High refractive index handled, R={R_high_n}")
+    except Exception as e:
+        print(f"Error with high refractive index: {e}")
+
+    print("\n=== Checking Output Files ===")
+    expected_files = [
+        'results/summary.txt',
+        'results/profile_comparison.json',
+        'results/moth_eye_3d_structure.png',
+        'results/moth_eye_profiles.png',
+        'results/moth_eye_comparison.png',
+        'results/moth_eye_spectral.png',
+        'results/moth_eye_angular.png',
+        'results/moth_eye_vs_traditional.png',
+        'results/literature_comparison.png',
+        'results/sensitivity_heatmap.png',
+        'results/3d_reflectance_surface.png',
+        'results/parallel_coordinates.png',
+        'results/ml_learning_curve.png',
+    ]
+    missing = [f for f in expected_files if not os.path.exists(f)]
+    if missing:
+        print(f"Warning: Missing result files: {missing}")
+    else:
+        print("✓ All expected result files are present.")
+
     print("\n=== All Tests Passed ===")
 
 if __name__ == "__main__":

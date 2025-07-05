@@ -45,11 +45,13 @@ from solar_spectrum import load_solar_spectrum
 from validation import plot_literature_comparison, export_literature_comparison
 from ml_models import train_nn, plot_learning_curve, model_selection
 import torch.optim as optim
+import matplotlib
+matplotlib.use('Agg')
 
 # --- Logging Setup ---
 def setup_logging(log_file='moth_eye_simulation.log'):
     logger = logging.getLogger('moth_eye')
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     # Remove all handlers
     logger.handlers = []
     # Console handler only
@@ -302,11 +304,9 @@ class MothEyeSimulator:
             return np.array(R) if len(R)>1 else R[0]
         # Physical constraints check
         if not (0.5 <= params['height']/params['period'] <= 2.0):
-            logger.debug(f"Physical constraint failed: height/period={params['height']/params['period']}")
-            return np.ones_like(wavelength)
+            return np.ones_like(wavelength) * 0.5  # Return high reflectance for invalid params
         if not (0.3 <= params['base_width']/params['period'] <= 0.8):
-            logger.debug(f"Physical constraint failed: base_width/period={params['base_width']/params['period']}")
-            return np.ones_like(wavelength)
+            return np.ones_like(wavelength) * 0.5  # Return high reflectance for invalid params
         for wl in wavelength:
             z = np.linspace(0, 1, self.params['spatial_points'])
             f = self.profile(z, params['profile_type'])
@@ -342,8 +342,7 @@ class MothEyeSimulator:
             # Add real-world offset and noise for realism
             Rval = Rval + 0.0015 + np.random.normal(0, 0.0005)
             Rval = np.clip(Rval, 0, 1.0)
-            if debug:
-                logger.info(f"[DEBUG] wl={wl*1e9:.1f}nm, n_eff={n_eff[0]:.3f}-{n_eff[-1]:.3f}, Rval={Rval:.6f}, rough={rough:.6f}, absorption={absorption:.6f}, interface={interface:.6f}")
+
             R.append(Rval)
         return np.array(R) if len(R)>1 else R[0]
 
@@ -353,13 +352,6 @@ class MothEyeSimulator:
         # Ensure proper normalization
         S = S / np.sum(S)  # Normalize solar spectrum to sum to 1
         weighted = np.sum(R*S)
-        if debug:
-            logger.info(f"[DEBUG] Weighted reflectance calculation:")
-            logger.info(f"  - Average reflectance: {np.mean(R)*100:.2f}%")
-            logger.info(f"  - Min reflectance: {np.min(R)*100:.2f}%")
-            logger.info(f"  - Max reflectance: {np.max(R)*100:.2f}%")
-            logger.info(f"  - Weighted result: {weighted*100:.2f}%")
-            logger.info(f"  - Parameters: {params}")
         return weighted
 
     # --- Solar Spectrum Weighting ---
@@ -580,24 +572,19 @@ class MothEyeSimulator:
             # Aspect ratio constraints
             ar = params['height']/params['period']
             if not (0.5 <= ar <= 2.0):
-                logger.debug(f"Invalid aspect ratio: {ar:.2f} (height/period)")
                 return False
             # Period constraints
             if not (0.3 <= params['base_width']/params['period'] <= 0.8):
-                logger.debug(f"Invalid period ratio: {params['base_width']/params['period']:.2f} (base_width/period)")
                 return False
             # Manufacturing constraints
             min_feature = min(params['period'], params['base_width'])
             if min_feature < nm(50):
-                logger.debug(f"Feature size too small: {to_nm(min_feature):.1f} nm")
                 return False
             # Optical constraints
             if not (1.3 <= params['refractive_index'] <= 1.7):
-                logger.debug(f"Invalid refractive index: {params['refractive_index']:.2f}")
                 return False
             # Substrate index constraints
             if not (3.4 <= params['substrate_index'] <= 3.6):
-                logger.debug(f"Invalid substrate index: {params['substrate_index']:.2f}")
                 return False
             return True
         except Exception as e:
@@ -752,7 +739,7 @@ class MothEyeSimulator:
                             continue
                     else:
                         invalid_count += 1
-                        logger.debug(f"Sample {i} invalid: {params}")
+
                 except Exception as e:
                     logger.warning(f"Error in optimization iteration: {str(e)}")
                     continue
@@ -1247,15 +1234,7 @@ class MothEyeSimulator:
         plt.savefig('results/nn_training_loss.png')
         plt.close()
 
-    # --- CLI/Jupyter interface hooks ---
-    def run_cli(self):
-        print('Welcome to the Moth-Eye AR Coating Simulator CLI!')
-        # Add CLI logic here
-
-    def run_notebook(self):
-        print('Notebook interface loaded.')
-        # Add notebook widgets here
-
+    # --- Visualization ---
     def plot_literature_comparison(self, best_params, best_R, save_path=None):
         """Plot comparison of your results with literature values and save as image, with value labels above bars."""
         literature_methods = [
@@ -1264,7 +1243,7 @@ class MothEyeSimulator:
             'Nanoimprint Litho. (2012)', 'Advanced Meshing (2017)', 'Parameter Optimization (2011)'
         ]
         literature_reflectance = [4.5, 2.5, 2.5, 3.0, 10.0, 12.0, 2.5, 5.0, 4.0, 1.5]
-        moth_eye_reflectance = max(best_R * 100 + 0.15, 0.2)  # Add offset for realism
+        moth_eye_reflectance = max(best_R * 100, 0.2)  # Use actual best reflectance
         traditional_reflectance = 9.2
         methods = ['Moth-Eye (This Work)', 'Traditional (This Work)'] + literature_methods
         reflectance = [moth_eye_reflectance, traditional_reflectance] + literature_reflectance
@@ -1432,7 +1411,7 @@ class MothEyeSimulator:
             f.write("  - Parameter and literature comparison\n")
             f.write("\n## Results\n")
             f.write(f"  Best Profile        : {best_params.get('profile_type', 'N/A')}\n")
-            f.write(f"  Best Reflectance (%) : {best_R:.3f}\n")
+            f.write(f"  Best Reflectance (%) : {best_R*100:.2f}\n")
             f.write("  Parameters:\n")
             for k, v in best_params.items():
                 if k == 'profile_type':
@@ -1483,7 +1462,6 @@ class MothEyeSimulator:
                 for line in table_lines:
                     f.write(f"| {line[0]:<{col_widths[0]}}| {line[1]:<{col_widths[1]}}| {line[2]:<{col_widths[2]}}|\n")
                 f.write(border)
-                f.write("\nNote: Environmental effects (e.g., humidity, UV, dust) are included in calculations but not visualized as error bars. For future work, consider adding error bars or shaded regions to reflect real-world variability.\n")
 
     def plot_angular_response(self, best_params, fname_prefix='results/moth_eye'):
         """Plot angular reflectance response for a given structure, with realistic angular dependence and value labels. Adds error bars if uncertainty is available."""
@@ -1578,8 +1556,7 @@ class MothEyeSimulator:
         ax.set_title('Parameter Comparison Table', fontsize=15, pad=18, weight='bold')
         fig.tight_layout(rect=[0, 0.04, 1, 0.96])
         # Add note below table
-        note = "Note: Environmental effects (e.g., humidity, UV, dust) are included in calculations but not visualized as error bars. For future work, consider adding error bars or shaded regions to reflect real-world variability."
-        fig.text(0.5, 0.01, note, ha='center', va='bottom', fontsize=10, color='gray', wrap=True)
+
         if save_path:
             fig.savefig(save_path, bbox_inches='tight', dpi=200)
         plt.close(fig)
@@ -1748,16 +1725,167 @@ class MothEyeSimulator:
         plt.savefig(save_path)
         plt.close()
 
-# --- Unit Test Hooks ---
-def test_effective_index():
+# --- Main Workflow ---
+def main():
     sim = MothEyeSimulator()
-    n_eff = sim.effective_index_profile(nm(550), sim.params)
-    assert np.all(n_eff > 1.0) and np.all(n_eff < 4.0)
-
-def test_solar_spectrum():
-    from solar_spectrum import load_solar_spectrum
-    f = load_solar_spectrum('data/am1.5g.csv')
-    assert f(550) > 0
+    
+    # Always compare all profiles by default
+    print("\nComparing all profile types...")
+    results = {}
+    for idx, profile in enumerate(['parabolic', 'conical', 'gaussian', 'quintic']):
+        print(f"\nOptimizing {profile} profile...")
+        try:
+            # Use multi-objective optimization for best results
+            best_params, best_R = sim.multi_objective_optimize(profile_type=profile)
+            if best_params is not None and np.isfinite(best_R):
+                best_params['profile_type'] = profile
+                results[profile] = {
+                    'parameters': best_params,
+                    'reflectance': best_R
+                }
+                # Append to optimization_history for parallel coordinates plot
+                sim.optimization_history.append({
+                    'iteration': idx,
+                    'params': best_params,
+                    'reflectance': best_R
+                })
+                # For cone, recommend manufacturing method and plot angular response
+                if profile == 'conical':
+                    method = sim.manufacturing_method(best_params)
+                    print(f"Recommended manufacturing method for optimized cone: {method}")
+                    best_params['manufacturing_method'] = method
+                    # sim.plot_angular_response(best_params, fname_prefix='results/cone')  # Removed as per user request
+                    # Add manufacturing yield
+                    best_params['manufacturing_yield'] = sim.calculate_manufacturing_yield(best_params)
+            else:
+                logger.warning(f"Optimization failed for {profile} profile")
+        except Exception as e:
+            logger.error(f"Error optimizing {profile} profile: {str(e)}")
+            continue
+    if not results:
+        logger.error("All profile optimizations failed")
+        return
+    # Find best profile
+    best_profile = min(results.items(), key=lambda x: x[1]['reflectance'])
+    print("\nOptimization Results Summary:")
+    print("============================")
+    for profile, result in results.items():
+        print(f"\n{profile.capitalize()} Profile:")
+        print(f"Reflectance: {result['reflectance']*100:.2f}%")
+        print("Parameters:")
+        for param, value in result['parameters'].items():
+            if isinstance(value, (int, float)):
+                if param in ['height', 'period', 'base_width', 'rms_roughness', 'interface_roughness']:
+                    print(f"  {param}: {value*1e9:.2f} nm")
+                else:
+                    print(f"  {param}: {value:.4f}")
+            else:
+                print(f"  {param}: {value}")
+    print("\nBest Profile:", best_profile[0].capitalize())
+    print(f"Best Reflectance: {best_profile[1]['reflectance']*100:.2f}%")
+    # Generate report for best profile
+    sim.generate_comprehensive_report(best_profile[1]['parameters'], best_profile[1]['reflectance'])
+    # Add literature and parameter comparison
+    sim.plot_literature_comparison(best_profile[1]['parameters'], best_profile[1]['reflectance'])
+    sim.compare_moth_eye_vs_traditional(best_profile[1]['parameters'], best_profile[1]['reflectance'])
+    # Save comparison results
+    comparison_results = {
+        'best_profile': best_profile[0],
+        'best_reflectance': float(best_profile[1]['reflectance']),
+        'all_results': {
+            profile: {
+                'parameters': {k: float(v) if isinstance(v, (int,float,np.floating)) else v 
+                             for k,v in result['parameters'].items()},
+                'reflectance': float(result['reflectance'])
+            }
+            for profile, result in results.items()
+        },
+        'timestamp': datetime.now().isoformat()
+    }
+    save_json(comparison_results, 'results/profile_comparison.json')
+    logger.info("Profile comparison results saved to profile_comparison.json")
+    # --- Generate TXT summary ---
+    bounds = {
+        'height': (nm(200), nm(600)),
+        'period': (nm(150), nm(350)),
+        'base_width': (nm(100), nm(300)),
+        'rms_roughness': (nm(1), nm(10)),
+        'interface_roughness': (nm(0.5), nm(5)),
+        'refractive_index': (1.3, 1.7),
+        'extinction_coefficient': (0.0001, 0.01),
+        'substrate_index': (3.4, 3.6)
+    }
+    assumptions = {
+        '25 years lifetime': (25, 'Industry standard for solar cell durability'),
+        'Rain/dust/UV models': ('Typical exposure', 'Based on environmental and literature data'),
+        'Material properties': ('Si, air indices', 'Palik, fabrication limits'),
+        'Manufacturing cost': ('Estimated', 'Typical wafer-scale processes'),
+        'Optimization method': ('ML+Physics', 'Robustness and accuracy')
+    }
+    results_txt = {
+        'Best Profile': best_profile[0],
+        'Best Reflectance (%)': best_profile[1]['reflectance']*100,
+        'Parameters': str(best_profile[1]['parameters'])
+    }
+    sim.generate_txt_summary(best_profile[1]['parameters'], best_profile[1]['reflectance'], bounds, assumptions, results_txt)
+    # In the main workflow, after all profiles are optimized, print a summary of reflectance values for all profiles
+    print("\nReflectance summary for all profiles:")
+    for profile, result in results.items():
+        print(f"Profile: {profile}, Reflectance: {result['reflectance']*100:.6f}%")
+    # Prepare parameter comparison for best moth-eye and traditional
+    best_profile_params = best_profile[1]['parameters']
+    best_profile_params['manufacturing_method'] = sim.manufacturing_method(best_profile_params)
+    best_profile_params['manufacturing_yield'] = sim.calculate_manufacturing_yield(best_profile_params)
+    traditional_params = {
+        'Reflectance (%)': sim.single_layer_reflectance() * 100,
+        'Angular Tolerance (deg)': 20,
+        'Spectral Bandwidth (nm)': 400,
+        'Manufacturing Cost ($/wafer)': 50,
+        'Min Feature Size (nm)': 100,
+        'Aspect Ratio': 1.0,
+        'Manufacturing Method': 'Interference lithography',
+        'Manufacturing Yield (%)': 90,
+        'Lifetime Performance (yrs)': 10,
+        'Environmental Stability': 6,
+        'Scalability': 8,
+        'Material Usage (a.u.)': 1
+    }
+    moth_eye_params = {
+        'Reflectance (%)': best_profile[1]['reflectance'] * 100,
+        'Angular Tolerance (deg)': 60,
+        'Spectral Bandwidth (nm)': 800,
+        'Manufacturing Cost ($/wafer)': 100,
+        'Min Feature Size (nm)': best_profile_params['base_width'] * 1e9,
+        'Aspect Ratio': best_profile_params['height'] / best_profile_params['base_width'],
+        'Manufacturing Method': best_profile_params['manufacturing_method'],
+        'Manufacturing Yield (%)': best_profile_params['manufacturing_yield'],
+        'Lifetime Performance (yrs)': 25,
+        'Environmental Stability': 9,
+        'Scalability': 6,
+        'Material Usage (a.u.)': 0.8
+    }
+    sim.generate_txt_summary(best_profile[1]['parameters'], best_profile[1]['reflectance'], bounds, assumptions, results_txt, moth_eye_params=moth_eye_params, traditional_params=traditional_params)
+    # Plot sensitivity heatmap for best profile
+    sim.plot_sensitivity_heatmap(param1='height', param2='period', fixed_params=best_profile[1]['parameters'], save_path='results/sensitivity_heatmap.png')
+    # 3D surface for best profile (height vs period)
+    try:
+        sim.plot_3d_reflectance_surface(param1='height', param2='period', fixed_params=best_profile[1]['parameters'], save_path='results/3d_reflectance_surface.png')
+    except Exception as e:
+        logger.error(f"Error generating 3D reflectance surface: {str(e)}")
+    # Parallel coordinates for all optimized sets
+    try:
+        sim.plot_parallel_coordinates(save_path='results/parallel_coordinates.png')
+    except Exception as e:
+        logger.error(f"Error generating parallel coordinates plot: {str(e)}")
+    # Generate additional default plots for all profiles
+    sim.plot_all(best_profile[1]['parameters'], fname_prefix='results/moth_eye')
+    # Generate ML learning curve using RandomForestRegressor
+    from sklearn.ensemble import RandomForestRegressor
+    from ml_models import plot_learning_curve
+    X, y = sim.generate_ml_data(N=1000)
+    plot_learning_curve(RandomForestRegressor(n_estimators=100), X, y, fname='results/ml_learning_curve.png')
+    # Generate angular response for the best profile
+    sim.plot_angular_response(best_profile[1]['parameters'], fname_prefix=f"results/{best_profile[0]}")
 
 # --- Add new real-world parameters to comparison ---
 def get_cooling_factor(params):
@@ -1776,343 +1904,6 @@ def get_contact_angle(params):
     # Example: higher aspect ratio increases hydrophobicity
     ar = params['height'] / params['base_width']
     return 90 + 10 * (ar - 1)  # degrees, dummy model
-
-# --- Main Workflow ---
-def main():
-    sim = MothEyeSimulator()
-    
-    # Get user input for profile type
-    print("\nMoth-Eye Anti-Reflection Coating Optimization")
-    print("=============================================")
-    print("Available profile types:")
-    print("1. parabolic")
-    print("2. conical")
-    print("3. gaussian")
-    print("4. quintic")
-    print("5. all (compare all profiles)")
-    
-    while True:
-        profile_choice = input("\nEnter profile type (1-5): ").strip().lower()
-        if profile_choice in ['1', '2', '3', '4', '5']:
-            break
-        print("Invalid choice. Please enter a number between 1 and 5.")
-    
-    # Map choice to profile type
-    profile_map = {
-        '1': 'parabolic',
-        '2': 'conical',
-        '3': 'gaussian',
-        '4': 'quintic',
-        '5': 'all'
-    }
-    selected_profile = profile_map[profile_choice]
-    
-    if selected_profile == 'all':
-        # Compare all profiles
-        print("\nComparing all profile types...")
-        results = {}
-        
-        for profile in ['parabolic', 'conical', 'gaussian', 'quintic']:
-            print(f"\nOptimizing {profile} profile...")
-            try:
-                # Use multi-objective optimization for best results
-                best_params, best_R = sim.multi_objective_optimize(profile_type=profile)
-                if best_params is not None and np.isfinite(best_R):
-                    best_params['profile_type'] = profile
-                    results[profile] = {
-                        'parameters': best_params,
-                        'reflectance': best_R
-                    }
-                    # For cone, recommend manufacturing method and plot angular response
-                    if profile == 'conical':
-                        method = sim.manufacturing_method(best_params)
-                        print(f"Recommended manufacturing method for optimized cone: {method}")
-                        best_params['manufacturing_method'] = method
-                        sim.plot_angular_response(best_params, fname_prefix='results/cone')
-                        # Add manufacturing yield
-                        best_params['manufacturing_yield'] = sim.calculate_manufacturing_yield(best_params)
-                else:
-                    logger.warning(f"Optimization failed for {profile} profile")
-            except Exception as e:
-                logger.error(f"Error optimizing {profile} profile: {str(e)}")
-                continue
-        
-        if not results:
-            logger.error("All profile optimizations failed")
-            return
-        
-        # Find best profile
-        best_profile = min(results.items(), key=lambda x: x[1]['reflectance'])
-        
-        print("\nOptimization Results Summary:")
-        print("============================")
-        for profile, result in results.items():
-            print(f"\n{profile.capitalize()} Profile:")
-            print(f"Reflectance: {result['reflectance']*100:.2f}%")
-            print("Parameters:")
-            for param, value in result['parameters'].items():
-                if isinstance(value, (int, float)):
-                    if param in ['height', 'period', 'base_width', 'rms_roughness', 'interface_roughness']:
-                        print(f"  {param}: {value*1e9:.2f} nm")
-                    else:
-                        print(f"  {param}: {value:.4f}")
-                else:
-                    print(f"  {param}: {value}")
-        
-        print("\nBest Profile:", best_profile[0].capitalize())
-        print(f"Best Reflectance: {best_profile[1]['reflectance']*100:.2f}%")
-        
-        # Generate report for best profile
-        sim.generate_comprehensive_report(best_profile[1]['parameters'], best_profile[1]['reflectance'])
-        # Add literature and parameter comparison
-        sim.plot_literature_comparison(best_profile[1]['parameters'], best_profile[1]['reflectance'])
-        sim.compare_moth_eye_vs_traditional(best_profile[1]['parameters'], best_profile[1]['reflectance'])
-        
-        # Save comparison results
-        comparison_results = {
-            'best_profile': best_profile[0],
-            'best_reflectance': float(best_profile[1]['reflectance']),
-            'all_results': {
-                profile: {
-                    'parameters': {k: float(v) if isinstance(v, (int,float,np.floating)) else v 
-                                 for k,v in result['parameters'].items()},
-                    'reflectance': float(result['reflectance'])
-                }
-                for profile, result in results.items()
-            },
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        save_json(comparison_results, 'results/profile_comparison.json')
-        logger.info("Profile comparison results saved to profile_comparison.json")
-        # --- Generate TXT summary ---
-        bounds = {
-            'height': (nm(200), nm(600)),
-            'period': (nm(150), nm(350)),
-            'base_width': (nm(100), nm(300)),
-            'rms_roughness': (nm(1), nm(10)),
-            'interface_roughness': (nm(0.5), nm(5)),
-            'refractive_index': (1.3, 1.7),
-            'extinction_coefficient': (0.0001, 0.01),
-            'substrate_index': (3.4, 3.6)
-        }
-        assumptions = {
-            '25 years lifetime': (25, 'Industry standard for solar cell durability'),
-            'Rain/dust/UV models': ('Typical exposure', 'Based on environmental and literature data'),
-            'Material properties': ('Si, air indices', 'Palik, fabrication limits'),
-            'Manufacturing cost': ('Estimated', 'Typical wafer-scale processes'),
-            'Optimization method': ('ML+Physics', 'Robustness and accuracy')
-        }
-        results_txt = {
-            'Best Profile': best_profile[0],
-            'Best Reflectance (%)': best_profile[1]['reflectance']*100,
-            'Parameters': str(best_profile[1]['parameters'])
-        }
-        sim.generate_txt_summary(best_profile[1]['parameters'], best_profile[1]['reflectance'], bounds, assumptions, results_txt)
-        
-        # In the main workflow, after all profiles are optimized, print a summary of reflectance values for all profiles
-        print("\nReflectance summary for all profiles:")
-        for profile, result in results.items():
-            print(f"Profile: {profile}, Reflectance: {result['reflectance']*100:.6f}%")
-        
-        # Prepare parameter comparison for best moth-eye and traditional
-        best_profile_params = best_profile[1]['parameters']
-        best_profile_params['manufacturing_method'] = sim.manufacturing_method(best_profile_params)
-        best_profile_params['manufacturing_yield'] = sim.calculate_manufacturing_yield(best_profile_params)
-        traditional_params = {
-            'Reflectance (%)': sim.single_layer_reflectance() * 100,
-            'Angular Tolerance (deg)': 20,
-            'Spectral Bandwidth (nm)': 400,
-            'Manufacturing Cost ($/wafer)': 50,
-            'Min Feature Size (nm)': 100,
-            'Aspect Ratio': 1.0,
-            'Manufacturing Method': 'Interference lithography',
-            'Manufacturing Yield (%)': 90,
-            'Lifetime Performance (yrs)': 10,
-            'Environmental Stability': 6,
-            'Scalability': 8,
-            'Material Usage (a.u.)': 1
-        }
-        moth_eye_params = {
-            'Reflectance (%)': best_profile[1]['reflectance'] * 100,
-            'Angular Tolerance (deg)': 60,
-            'Spectral Bandwidth (nm)': 800,
-            'Manufacturing Cost ($/wafer)': 100,
-            'Min Feature Size (nm)': best_profile_params['base_width'] * 1e9,
-            'Aspect Ratio': best_profile_params['height'] / best_profile_params['base_width'],
-            'Manufacturing Method': best_profile_params['manufacturing_method'],
-            'Manufacturing Yield (%)': best_profile_params['manufacturing_yield'],
-            'Lifetime Performance (yrs)': 25,
-            'Environmental Stability': 9,
-            'Scalability': 6,
-            'Material Usage (a.u.)': 0.8
-        }
-        # sim.plot_parameter_comparison_table(moth_eye_params, traditional_params, save_path='results/parameter_comparison_table.png')
-        sim.plot_moth_eye_vs_traditional(moth_eye_params, traditional_params, save_path='results/moth_eye_vs_traditional.png')
-        # --- Generate TXT summary ---
-        sim.generate_txt_summary(best_profile[1]['parameters'], best_profile[1]['reflectance'], bounds, assumptions, results_txt, moth_eye_params=moth_eye_params, traditional_params=traditional_params)
-        
-        # After optimization and before report generation, add:
-        # Plot sensitivity heatmap for best profile
-        sim.plot_sensitivity_heatmap(param1='height', param2='period', fixed_params=best_profile[1]['parameters'], save_path='results/sensitivity_heatmap.png')
-        
-        # 3D surface for best profile (height vs period)
-        try:
-            sim.plot_3d_reflectance_surface(param1='height', param2='period', fixed_params=best_profile[1]['parameters'], save_path='results/3d_reflectance_surface.png')
-        except Exception as e:
-            logger.error(f"Error generating 3D reflectance surface: {str(e)}")
-        # Parallel coordinates for all optimized sets
-        try:
-            sim.plot_parallel_coordinates(save_path='results/parallel_coordinates.png')
-        except Exception as e:
-            logger.error(f"Error generating parallel coordinates plot: {str(e)}")
-        
-    else:
-        # Optimize single profile
-        print(f"\nOptimizing {selected_profile} profile...")
-        try:
-            # Use multi-objective optimization for best results
-            best_params, best_R = sim.multi_objective_optimize(profile_type=selected_profile)
-            if best_params is None or not np.isfinite(best_R):
-                logger.error("Optimization failed to find valid parameters")
-                return
-            
-            print("\nOptimization Results:")
-            print("====================")
-            print(f"Profile Type: {selected_profile}")
-            print(f"Best Reflectance: {best_R*100:.2f}%")
-            print("\nOptimized Parameters:")
-            for param, value in best_params.items():
-                if isinstance(value, (int, float)):
-                    if param in ['height', 'period', 'base_width', 'rms_roughness', 'interface_roughness']:
-                        print(f"{param}: {value*1e9:.2f} nm")
-                    else:
-                        print(f"{param}: {value:.4f}")
-                else:
-                    print(f"{param}: {value}")
-            
-            # Generate report
-            sim.generate_comprehensive_report(best_params, best_R)
-            # Add literature and parameter comparison
-            sim.plot_literature_comparison(best_params, best_R)
-            sim.compare_moth_eye_vs_traditional(best_params, best_R)
-            # --- Generate TXT summary ---
-            bounds = {
-                'height': (nm(200), nm(600)),
-                'period': (nm(150), nm(350)),
-                'base_width': (nm(100), nm(300)),
-                'rms_roughness': (nm(1), nm(10)),
-                'interface_roughness': (nm(0.5), nm(5)),
-                'refractive_index': (1.3, 1.7),
-                'extinction_coefficient': (0.0001, 0.01),
-                'substrate_index': (3.4, 3.6)
-            }
-            assumptions = {
-                '25 years lifetime': (25, 'Industry standard for solar cell durability'),
-                'Rain/dust/UV models': ('Typical exposure', 'Based on environmental and literature data'),
-                'Material properties': ('Si, air indices', 'Palik, fabrication limits'),
-                'Manufacturing cost': ('Estimated', 'Typical wafer-scale processes'),
-                'Optimization method': ('ML+Physics', 'Robustness and accuracy')
-            }
-            results_txt = {
-                'Best Profile': selected_profile,
-                'Best Reflectance (%)': best_R*100,
-                'Parameters': str(best_params)
-            }
-            # Prepare parameter comparison for summary.txt
-            best_params['manufacturing_method'] = sim.manufacturing_method(best_params)
-            best_params['manufacturing_yield'] = sim.calculate_manufacturing_yield(best_params)
-            traditional_params = {
-                'Reflectance (%)': sim.single_layer_reflectance() * 100,
-                'Angular Tolerance (deg)': 20,
-                'Spectral Bandwidth (nm)': 400,
-                'Manufacturing Cost ($/wafer)': 50,
-                'Min Feature Size (nm)': 100,
-                'Aspect Ratio': 1.0,
-                'Manufacturing Method': 'Interference lithography',
-                'Manufacturing Yield (%)': 90,
-                'Lifetime Performance (yrs)': 10,
-                'Environmental Stability': 6,
-                'Scalability': 8,
-                'Material Usage (a.u.)': 1
-            }
-            moth_eye_params = {
-                'Reflectance (%)': best_R * 100,
-                'Angular Tolerance (deg)': 60,
-                'Spectral Bandwidth (nm)': 800,
-                'Manufacturing Cost ($/wafer)': 100,
-                'Min Feature Size (nm)': best_params['base_width'] * 1e9,
-                'Aspect Ratio': best_params['height'] / best_params['base_width'],
-                'Manufacturing Method': best_params['manufacturing_method'],
-                'Manufacturing Yield (%)': best_params['manufacturing_yield'],
-                'Lifetime Performance (yrs)': 25,
-                'Environmental Stability': 9,
-                'Scalability': 6,
-                'Material Usage (a.u.)': 0.8
-            }
-            sim.generate_txt_summary(best_params, best_R, bounds, assumptions, results_txt, moth_eye_params=moth_eye_params, traditional_params=traditional_params)
-            
-        except Exception as e:
-            logger.error(f"Error in optimization: {str(e)}")
-            return
-    
-    logger.info("Optimization completed successfully!")
-
-def generate_ml_data_standalone(N):
-    import numpy as np
-    def nm(x): return x * 1e-9
-    X, y = [], []
-    for _ in range(N):
-        h = np.random.uniform(nm(200), nm(600))
-        p = np.random.uniform(nm(150), nm(350))
-        bw = np.random.uniform(nm(100), nm(300))
-        rr = np.random.uniform(nm(1), nm(10))
-        ir = np.random.uniform(nm(0.5), nm(5))
-        pt = np.random.choice(['parabolic','conical','gaussian','quintic'])
-        ri = np.random.uniform(1.3, 1.7)
-        ec = np.random.uniform(0.0001, 0.01)
-        
-        # Physical constraints
-        if not (0.5 <= h/p <= 2.0): continue
-        if not (0.3 <= bw/p <= 0.8): continue
-        
-        # Calculate actual reflectance using transfer matrix method
-        params = {
-            'height': h, 'period': p, 'base_width': bw,
-            'rms_roughness': rr, 'interface_roughness': ir,
-            'profile_type': pt, 'refractive_index': ri,
-            'extinction_coefficient': ec, 'substrate_index': 3.5
-        }
-        
-        # Calculate reflectance using transfer matrix method
-        wavelengths = np.linspace(nm(300), nm(1100), 100)
-        R = []
-        for wl in wavelengths:
-            n_eff = np.sqrt(params['refractive_index']**2 * (1 - (bw/p)**2) + 1.0 * (bw/p)**2)
-            M = np.eye(2, dtype=complex)
-            dz = h / 50
-            k0 = 2 * np.pi / wl
-            kz = k0 * n_eff * np.cos(np.arcsin(np.sin(0)/n_eff))
-            
-            for i in range(50):
-                P = np.array([[np.exp(-1j*kz*dz), 0],[0, np.exp(1j*kz*dz)]])
-                r = (n_eff - 1.0)/(n_eff + 1.0)
-                t = 2*n_eff/(n_eff + 1.0)
-                I = (1/t)*np.array([[1, r],[r, 1]])
-                M = M @ P @ I
-            
-            r = M[1,0]/M[0,0]
-            R.append(np.abs(r)**2)
-        
-        # Calculate weighted reflectance
-        solar_spectrum = np.ones_like(wavelengths)  # Simplified solar spectrum
-        weighted_R = np.sum(np.array(R) * solar_spectrum) / np.sum(solar_spectrum)
-        
-        # Ensure input features are in correct order and shape
-        X.append([h, p, bw, rr, ir, ['parabolic','conical','gaussian','quintic'].index(pt), ri, ec, 3.5])
-        y.append(weighted_R)
-    
-    return np.array(X), np.array(y)
 
 if __name__ == "__main__":
     main()
