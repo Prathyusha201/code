@@ -15,27 +15,43 @@ literature_reflectance = [
     {"method": "Parameter Optimization (2011)", "reflectance": 1.5, "ref": "Yamada et al. 2011"}
 ]
 
-def plot_literature_comparison(simulated_methods, simulated_reflectance, fname='results/literature_comparison.png'):
-    methods = [d['method'] for d in literature_reflectance] + simulated_methods
-    reflectance = [d['reflectance'] for d in literature_reflectance] + simulated_reflectance
-    colors = ['b','g','purple','r','orange','c','m','brown','gray','k'] + ['#1f77b4']*len(simulated_methods)
+def plot_literature_comparison(methods: list, reflectances: list) -> None:
+    """
+    Plot a comparison of reflectance values from literature and this work.
+    Args:
+        methods (list): List of method names.
+        reflectances (list): List of reflectance values.
+    Returns:
+        None
+    """
+    methods = [d['method'] for d in literature_reflectance] + methods
+    reflectance = [d['reflectance'] for d in literature_reflectance] + reflectances
+    colors = ['b','g','purple','r','orange','c','m','brown','gray','k'] + ['#1f77b4']*len(methods)
     plt.figure(figsize=(12,6))
     plt.bar(methods, reflectance, color=colors[:len(methods)])
     plt.ylabel('Reflectance (%)')
     plt.title('Comparison of Reflectance Reduction Methods from Literature and Simulation')
     plt.xticks(rotation=30, ha='right')
     plt.tight_layout()
-    plt.savefig(fname)
+    plt.savefig('results/literature_comparison.png')
     plt.close()
 
-def export_literature_comparison(simulated_methods, simulated_reflectance, fname_csv='results/literature_comparison.csv', fname_tex='results/literature_comparison.tex'):
+def export_literature_comparison(methods: list, reflectances: list) -> None:
+    """
+    Export literature comparison data to a CSV or text file.
+    Args:
+        methods (list): List of method names.
+        reflectances (list): List of reflectance values.
+    Returns:
+        None
+    """
     rows = [
         {'Method': d['method'], 'Reflectance (%)': d['reflectance'], 'Reference': d['ref']}
         for d in literature_reflectance
     ]
-    for m, r in zip(simulated_methods, simulated_reflectance):
+    for m, r in zip(methods, reflectances):
         rows.append({'Method': m, 'Reflectance (%)': r, 'Reference': 'This work'})
     df = pd.DataFrame(rows)
-    df.to_csv(fname_csv, index=False)
-    with open(fname_tex, 'w') as f:
+    df.to_csv('results/literature_comparison.csv', index=False)
+    with open('results/literature_comparison.tex', 'w') as f:
         f.write(df.to_latex(index=False, float_format='%.2f')) 

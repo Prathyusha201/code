@@ -1,6 +1,41 @@
-# Moth-Eye Anti-Reflection Coating Simulation & Optimization
+# Moth-Eye Anti-Reflection Coating Simulation
 
-This project implements a comprehensive, publication-grade simulation and optimization framework for moth-eye anti-reflection coatings, inspired by natural nanostructures, for advanced solar cell applications. The framework models optical, environmental, and manufacturing properties, and leverages both physics-based and machine learning-guided optimization.
+## Overview
+This project simulates and optimizes traditional and moth-eye nanostructured anti-reflection coatings for solar cells. It includes advanced optical modeling, multi-objective optimization, manufacturability assessment, and automated result generation.
+
+## Setup
+1. Clone the repository and navigate to the project folder.
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. (Optional) Use a virtual environment for reproducibility.
+
+## Usage
+Run the main simulation and optimization:
+```bash
+python moth_eye_project.py
+```
+All results, plots, and summary files will be saved in the `results/` folder.
+
+## Testing
+Run the test script to verify correctness:
+```bash
+python test_moth_eye.py
+```
+
+## Reproducibility
+- All dependencies are listed in `requirements.txt`.
+- For best results, use the specified versions.
+
+## Project Structure
+- `moth_eye_project.py`: Main simulation and optimization code
+- `ml_models.py`, `materials.py`, `solar_spectrum.py`, `validation.py`: Supporting modules
+- `test_moth_eye.py`: Automated tests
+- `results/`: Output folder for all results and plots
+
+## Contact
+For questions, contact Prathyusha Murali Mohan Raju
 
 ## Features
 
@@ -14,47 +49,6 @@ This project implements a comprehensive, publication-grade simulation and optimi
 - Environmental and lifetime performance analysis
 - Manufacturing feasibility, cost, and scalability assessment
 - Automated report and publication-quality figure generation
-
-## Installation
-
-1. Clone this repository
-2. Install the required dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-## Usage
-
-### Main Simulation
-Run the main simulation and optimization:
-```bash
-python moth_eye_project.py
-```
-This will:
-1. Initialize the simulator with default parameters
-2. Run multi-profile optimization (parabolic, conical, gaussian, quintic)
-3. Generate performance and manufacturing analysis
-4. Create publication-ready plots and reports in the `results/` directory
-
-**Note:** All results are generated automatically. No user input is required.
-
-### Testing
-Run the test suite to verify core simulation and optimization routines:
-```bash
-python test_moth_eye.py
-```
-
-## Project Structure
-
-- `moth_eye_project.py`: Core simulation, optimization, and analysis framework
-- `ml_models.py`: Machine learning models and utilities
-- `solar_spectrum.py`: Solar spectrum data handling
-- `materials.py`: Material property interpolation and management
-- `validation.py`: Literature comparison and validation tools
-- `test_moth_eye.py`: Automated tests for simulation and optimization
-- `requirements.txt`: Project dependencies
-- `results/`: Output directory for all figures, tables, and reports
-- `data/`: Material and spectrum data files
 
 ## References
 
@@ -70,9 +64,15 @@ python test_moth_eye.py
 - Yamada et al. (2011)
 - Palik, Handbook of Optical Constants of Solids
 
-## Author
+======================================================================
 
-Prathyusha Murali Mohan Raju
+## Limitations and Future Work
+- No experimental fabrication or physical noise injection; results are simulation-based only.
+- Environmental effects (humidity, dust, UV) are modeled based on literature, not explicitly simulated.
+- Economic analysis is limited to manufacturing cost estimation; no full lifecycle or market analysis.
+- No integration with commercial solar cell manufacturing lines.
+- Only silicon-based solar cells are considered; other materials are not studied in depth.
+- Future work could include experimental validation, more advanced scattering models, and integration with commercial manufacturing workflows. 
 
 ---
 

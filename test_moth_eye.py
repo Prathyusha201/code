@@ -2,7 +2,12 @@ from moth_eye_project import MothEyeSimulator, nm
 import numpy as np
 import os
 
-def test_reflectance():
+def test_reflectance() -> None:
+    """
+    Test the reflectance calculation for flat interface and moth-eye structure.
+    Returns:
+        None
+    """
     sim = MothEyeSimulator()
     
     # Test flat interface (should match Fresnel)
@@ -124,6 +129,13 @@ def test_reflectance():
         print("✓ All expected result files are present.")
 
     print("\n=== All Tests Passed ===")
+
+# Note:
+# The reflectance values for each profile type in this test script may differ slightly
+# from the best values reported in the main simulation results. This is because the test
+# uses default or fixed parameters for quick validation, while the main code performs
+# extensive multi-objective optimization to find the absolute best parameters.
+# Both results are expected to be in the ultra-low reflectance range, confirming correct code behavior.
 
 if __name__ == "__main__":
     test_reflectance() 

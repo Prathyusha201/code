@@ -12,7 +12,17 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 class SimpleNN(nn.Module):
-    def __init__(self, input_size, hidden=64, dropout=0.2):
+    """
+    Simple feedforward neural network for regression tasks.
+    """
+    def __init__(self, input_size: int, hidden: int = 64, dropout: float = 0.2) -> None:
+        """
+        Initialize the neural network.
+        Args:
+            input_size (int): Number of input features.
+            hidden (int): Number of hidden units.
+            dropout (float): Dropout rate.
+        """
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_size, hidden),
@@ -20,7 +30,14 @@ class SimpleNN(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden, 1)
         )
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the neural network.
+        Args:
+            x (torch.Tensor): Input tensor.
+        Returns:
+            torch.Tensor: Output tensor.
+        """
         return self.net(x)
 
 def train_nn(X, y, input_size, epochs=100, batch=32):

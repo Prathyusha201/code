@@ -154,7 +154,15 @@ class ResidualBlock(nn.Module):
 # --- Main Simulation Class ---
 
 class MothEyeSimulator:
-    def __init__(self, config=None):
+    """
+    Main simulation and optimization class for moth-eye and traditional anti-reflection coatings.
+    """
+    def __init__(self, config: dict = None) -> None:
+        """
+        Initialize the simulator with default or user-provided parameters.
+        Args:
+            config (dict, optional): Optional configuration dictionary.
+        """
         # --- Physical constants ---
         self.c = 299792458
         self.h = 6.62607015e-34
@@ -285,8 +293,17 @@ class MothEyeSimulator:
         M = M @ P_final # Applies final propagation
         return M # Returns the complete transfer matrix
 
-    def reflectance(self, params, theta=0, wavelength=None, debug=False):
-        """Calculate reflectance using transfer matrix method with proper physical constraints and real-world realism."""
+    def reflectance(self, params: dict, theta: float = 0, wavelength: np.ndarray = None, debug: bool = False) -> np.ndarray:
+        """
+        Calculate reflectance using the transfer matrix method.
+        Args:
+            params (dict): Structure and material parameters.
+            theta (float): Incident angle in degrees.
+            wavelength (np.ndarray, optional): Wavelength(s) in meters.
+            debug (bool): If True, print debug info.
+        Returns:
+            np.ndarray: Reflectance values for each wavelength.
+        """
         import numpy as np
         if wavelength is None: wavelength = self.wavelengths
         if np.isscalar(wavelength): wavelength = np.array([wavelength])
