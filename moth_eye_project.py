@@ -175,7 +175,6 @@ class MothEyeSimulator:
         self.n_si = 3.5  # For simplicity, use constant or use Sellmeier for more accuracy
         self.ml = EnhancedMothEyeML(input_size=9)
         self.temperature_range = np.linspace(273.15, 373.15, 5)  # 0°C to 100°C
-        self.n_workers = max(1, multiprocessing.cpu_count() - 1)
         ensure_dir('results')
         self.optimization_history = []
         # Load real material data
@@ -270,21 +269,21 @@ class MothEyeSimulator:
         dz = self.params['height'] / N
         M = np.eye(2, dtype=complex)
         n0 = self.n_air
-        sin_theta_i = n0 * np.sin(theta_rad)
-        theta_layers = np.arcsin(sin_theta_i / n_eff)
-        k0 = 2 * np.pi / wavelength
-        kz = k0 * n_eff * np.cos(theta_layers)
+        sin_theta_i = n0 * np.sin(theta_rad) # Snell's law: n₀sin(θ₀) = n₁sin(θ₁) = constant
+        theta_layers = np.arcsin(sin_theta_i / n_eff) # Calculates angle in each layer using Snell's law
+        k0 = 2 * np.pi / wavelength # Wavevector in vacuum
+        kz = k0 * n_eff * np.cos(theta_layers) # Wavevector in each layer
         for i in range(N-1):
-            P = np.array([[np.exp(-1j*kz[i]*dz), 0],[0, np.exp(1j*kz[i]*dz)]])
+            P = np.array([[np.exp(-1j*kz[i]*dz), 0],[0, np.exp(1j*kz[i]*dz)]]) # Propagation matrix for layer i
             r = (n_eff[i]*np.cos(theta_layers[i]) - n_eff[i+1]*np.cos(theta_layers[i+1])) / \
-                (n_eff[i]*np.cos(theta_layers[i]) + n_eff[i+1]*np.cos(theta_layers[i+1]))
+                (n_eff[i]*np.cos(theta_layers[i]) + n_eff[i+1]*np.cos(theta_layers[i+1])) #Fresnel reflection coefficient at interface
             t = 2*n_eff[i]*np.cos(theta_layers[i]) / \
-                (n_eff[i]*np.cos(theta_layers[i]) + n_eff[i+1]*np.cos(theta_layers[i+1]))
-            I = (1/t)*np.array([[1, r],[r, 1]])
-            M = M @ P @ I
-        P_final = np.array([[np.exp(-1j*kz[-1]*dz), 0],[0, np.exp(1j*kz[-1]*dz)]])
-        M = M @ P_final
-        return M
+                (n_eff[i]*np.cos(theta_layers[i]) + n_eff[i+1]*np.cos(theta_layers[i+1])) # Fresnel transmission coefficient at interface
+            I = (1/t)*np.array([[1, r],[r, 1]]) # Interface matrix
+            M = M @ P @ I # Propagation matrix for layer i
+        P_final = np.array([[np.exp(-1j*kz[-1]*dz), 0],[0, np.exp(1j*kz[-1]*dz)]]) # Propagation matrix for final layer
+        M = M @ P_final # Applies final propagation
+        return M # Returns the complete transfer matrix
 
     def reflectance(self, params, theta=0, wavelength=None, debug=False):
         """Calculate reflectance using transfer matrix method with proper physical constraints and real-world realism."""
@@ -297,7 +296,7 @@ class MothEyeSimulator:
             n1 = self.n_air
             n2 = params.get('substrate_index', 3.5)
             for wl in wavelength:
-                Rval = ((n1 - n2) / (n1 + n2)) ** 2
+                Rval = ((n1 - n2) / (n1 + n2)) ** 2 # Fresnel formula for normal incidence reflectance
                 if debug:
                     logger.info(f"[FRESNEL] wl={wl*1e9:.1f}nm, n1={n1:.3f}, n2={n2:.3f}, Rval={Rval:.6f}")
                 R.append(Rval)
@@ -334,14 +333,14 @@ class MothEyeSimulator:
             r = M[1,0]/M[0,0]
             Rval = np.abs(r)**2
             # Apply physical effects with more realistic factors
-            rough = 1.0 - 0.1 * np.exp(-((4*np.pi*params['rms_roughness']/wl)**2))
-            absorption = 1.0 - 0.05 * np.exp(-4*np.pi*params['extinction_coefficient']/wl)
-            interface = 1.0 - 0.05 * np.exp(-((2*np.pi*params['interface_roughness']/wl)**2))
+            rough = 1.0 - 0.1 * np.exp(-((4*np.pi*params['rms_roughness']/wl)**2)) # Surface roughness effect (Rayleigh criterion)
+            absorption = 1.0 - 0.05 * np.exp(-4*np.pi*params['extinction_coefficient']/wl) # Absorption effect
+            interface = 1.0 - 0.05 * np.exp(-((2*np.pi*params['interface_roughness']/wl)**2)) # Interface roughness effect
             # Apply effects additively instead of multiplicatively
             Rval = Rval * (1.0 - (1.0 - rough) - (1.0 - absorption) - (1.0 - interface))
             # Add real-world offset and noise for realism
             Rval = Rval + 0.0015 + np.random.normal(0, 0.0005)
-            Rval = np.clip(Rval, 0, 1.0)
+            Rval = np.clip(Rval, 0, 1.0) # Clips reflectance to 0-1 range
 
             R.append(Rval)
         return np.array(R) if len(R)>1 else R[0]
@@ -351,27 +350,27 @@ class MothEyeSimulator:
         S = self.solar_spectrum(self.wavelengths)
         # Ensure proper normalization
         S = S / np.sum(S)  # Normalize solar spectrum to sum to 1
-        weighted = np.sum(R*S)
-        return weighted
+        weighted = np.sum(R*S) # Weighted reflectance
+        return weighted # Returns the weighted reflectance
 
     # --- Solar Spectrum Weighting ---
     def solar_spectrum(self, wavelengths):
         # Use real AM1.5G spectrum
-        wl_nm = wavelengths*1e9
-        intensity = self.solar_spectrum_func(wl_nm)
-        return intensity/np.max(intensity)
+        wl_nm = wavelengths*1e9 # Convert wavelengths to nm
+        intensity = self.solar_spectrum_func(wl_nm) # Get intensity from solar spectrum function
+        return intensity/np.max(intensity) # Normalize intensity to 0-1 range
 
     # --- Traditional Coatings ---
     def single_layer_reflectance(self):
-        n_opt = np.sqrt(self.n_si*self.n_air)
-        R = ((self.n_air-n_opt)/(self.n_air+n_opt))**2
-        return R
+        n_opt = np.sqrt(self.n_si*self.n_air) # Effective index of single layer
+        R = ((self.n_air-n_opt)/(self.n_air+n_opt))**2 # Fresnel formula for normal incidence reflectance
+        return R # Returns the reflectance
 
     def double_layer_reflectance(self):
-        n1 = (self.n_air*self.n_si)**(1/3)
-        n2 = (self.n_air*self.n_si)**(2/3)
-        R = ((self.n_air-n1)/(self.n_air+n1))**2 * ((n1-n2)/(n1+n2))**2 * ((n2-self.n_si)/(n2+self.n_si))**2
-        return R
+        n1 = (self.n_air*self.n_si)**(1/3) # Effective index of first layer
+        n2 = (self.n_air*self.n_si)**(2/3) # Effective index of second layer
+        R = ((self.n_air-n1)/(self.n_air+n1))**2 * ((n1-n2)/(n1+n2))**2 * ((n2-self.n_si)/(n2+self.n_si))**2 # Fresnel formula for double layer reflectance
+        return R # Returns the reflectance
 
     def gradient_index_reflectance(self):
         """Calculate reflectance for gradient-index coating using transfer matrix method."""
@@ -445,28 +444,28 @@ class MothEyeSimulator:
             if not (0.5 <= params['height']/params['period'] <= 2.0): return 1.0
             if not (0.3 <= params['base_width']/params['period'] <= 0.8): return 1.0
             return self.weighted_reflectance(params)
-        x0 = [nm(300), nm(250), nm(200), nm(5), nm(2)]
-        res = minimize(obj, x0, bounds=bounds, method='L-BFGS-B')
+        x0 = [nm(300), nm(250), nm(200), nm(5), nm(2)] # Initial guess for optimization
+        res = minimize(obj, x0, bounds=bounds, method='L-BFGS-B') # Minimizes the objective function
         best = {
             'height': res.x[0], 'period': res.x[1], 'base_width': res.x[2],
             'rms_roughness': res.x[3], 'interface_roughness': res.x[4],
             'profile_type': profile_type, 'refractive_index': 1.5,
             'extinction_coefficient': 0.001, 'substrate_index': 3.5
         }
-        return best, res.fun
+        return best, res.fun # Returns the best parameters and the objective function value
 
     # --- ML Data Generation ---
     def generate_ml_data(self, N=1000):
         X, y = [], []
         for _ in range(N):
-            h = np.random.uniform(nm(200), nm(600))
-            p = np.random.uniform(nm(150), nm(350))
-            bw = np.random.uniform(nm(100), nm(300))
-            rr = np.random.uniform(nm(1), nm(10))
-            ir = np.random.uniform(nm(0.5), nm(5))
-            pt = np.random.choice(['parabolic','conical','gaussian','quintic'])
-            ri = np.random.uniform(1.3, 1.7)
-            ec = np.random.uniform(0.0001, 0.01)
+            h = np.random.uniform(nm(200), nm(600)) # Random height between 200nm and 600nm
+            p = np.random.uniform(nm(150), nm(350)) # Random period between 150nm and 350nm
+            bw = np.random.uniform(nm(100), nm(300)) # Random base width between 100nm and 300nm
+            rr = np.random.uniform(nm(1), nm(10)) # Random rms roughness between 1nm and 10nm
+            ir = np.random.uniform(nm(0.5), nm(5)) # Random interface roughness between 0.5nm and 5nm
+            pt = np.random.choice(['parabolic','conical','gaussian','quintic']) # Random profile type
+            ri = np.random.uniform(1.3, 1.7) # Random refractive index between 1.3 and 1.7
+            ec = np.random.uniform(0.0001, 0.01) # Random extinction coefficient between 0.0001 and 0.01
             si = np.random.uniform(3.4, 3.6)  # Substrate index
             params = {
                 'height': h, 'period': p, 'base_width': bw,
@@ -479,26 +478,7 @@ class MothEyeSimulator:
             if not (0.3 <= bw/p <= 0.8): continue
             X.append([h, p, bw, rr, ir, ['parabolic','conical','gaussian','quintic'].index(pt), ri, ec, si])
             y.append(self.weighted_reflectance(params))
-        return np.array(X), np.array(y)
-
-    # --- ML Optimization ---
-    def optimize_ml(self, profile_type='parabolic'):
-        # Use ML model to speed up optimization
-        bounds = [
-            (nm(200), nm(600)), (nm(150), nm(350)), (nm(100), nm(300)),
-            (nm(1), nm(10)), (nm(0.5), nm(5)), (0, 3), (1.3, 1.7), (0.0001, 0.01)
-        ]
-        def obj(x):
-            return self.ml(torch.FloatTensor(x))[0]
-        x0 = [nm(300), nm(250), nm(200), nm(5), nm(2), ['parabolic','conical','gaussian','quintic'].index(profile_type), 1.5, 0.001]
-        res = minimize(obj, x0, bounds=bounds, method='L-BFGS-B')
-        best = {
-            'height': res.x[0], 'period': res.x[1], 'base_width': res.x[2],
-            'rms_roughness': res.x[3], 'interface_roughness': res.x[4],
-            'profile_type': ['parabolic','conical','gaussian','quintic'][int(res.x[5])],
-            'refractive_index': res.x[6], 'extinction_coefficient': res.x[7], 'substrate_index': 3.5
-        }
-        return best, res.fun
+        return np.array(X), np.array(y) # Returns the data and the objective function value
 
     # --- Visualization ---
     def plot_all(self, best_params, fname_prefix='results/moth_eye', save_to_pdf=False):
@@ -590,215 +570,6 @@ class MothEyeSimulator:
         except Exception as e:
             logger.error(f"Error in physical validation: {str(e)}")
             return False
-
-    def _check_temperature_stability(self, params: Dict) -> bool:
-        """Check if the design is stable across temperature range."""
-        try:
-            R_values = []
-            for T in self.temperature_range:
-                params_temp = params.copy()
-                params_temp['temperature'] = T
-                R = self.weighted_reflectance(params_temp)
-                R_values.append(R)
-            
-            # Check if variation is within acceptable range
-            R_std = np.std(R_values)
-            return R_std < 0.05  # 5% variation threshold
-            
-        except Exception as e:
-            logger.error(f"Error in temperature stability check: {str(e)}")
-            return False
-            
-    def _convert_to_params(self, x: np.ndarray, profile_type: str) -> Dict:
-        """Convert optimization vector to parameter dictionary."""
-        return {
-            'height': x[0], 'period': x[1], 'base_width': x[2],
-            'rms_roughness': x[3], 'interface_roughness': x[4],
-            'profile_type': ['parabolic','conical','gaussian','quintic'][int(x[5])],
-            'refractive_index': x[6], 'extinction_coefficient': x[7],
-            'substrate_index': x[8]
-        }
-
-    def ml_guided_sampling(self, bounds):
-        """Generate samples guided by ML model predictions."""
-        n_samples = 100
-        best_x = None
-        best_score = float('inf')
-        
-        # Generate random samples within bounds
-        samples = []
-        for i, (lower, upper) in enumerate(bounds):
-            if i == 5:  # Profile type index
-                samples.append(np.random.randint(0, 4, n_samples))
-            else:
-                samples.append(np.random.uniform(lower, upper, n_samples))
-        samples = np.array(samples).T
-        
-        # Evaluate with ML model
-        with torch.no_grad():
-            scores = self.ml(torch.FloatTensor(samples)).numpy()
-        
-        # Find best sample
-        best_idx = np.argmin(scores)
-        return samples[best_idx]
-
-    def local_optimization(self, bounds, best_params):
-        """Perform local optimization around best parameters."""
-        if best_params is None:
-            return self.ml_guided_sampling(bounds)
-            
-        # Convert best params to optimization vector
-        x0 = [
-            best_params['height'],
-            best_params['period'],
-            best_params['base_width'],
-            best_params['rms_roughness'],
-            best_params['interface_roughness'],
-            ['parabolic','conical','gaussian','quintic'].index(best_params['profile_type']),
-            best_params['refractive_index'],
-            best_params['extinction_coefficient'],
-            best_params['substrate_index']
-        ]
-        
-        # Add small random perturbation
-        x = np.array(x0) * np.random.normal(1, 0.05, len(x0))
-        
-        # Ensure within bounds
-        for i, (lower, upper) in enumerate(bounds):
-            x[i] = np.clip(x[i], lower, upper)
-            
-        return x
-        
-    def parallel_optimize(self, profile_type='parabolic', n_iterations=50):
-        """
-        Hybrid optimization: ML-guided, with automatic fallback to physics-based if ML fails.
-        Logs all valid parameter sets and their reflectance. Always generates a report.
-        """
-        logger.info("Starting parallel optimization with {} workers...".format(self.n_workers))
-        X, y = self.generate_ml_data(N=1000)
-        self.scaler.fit(X)
-        X_scaled = self.scaler.transform(X)
-        self.ml.train()
-        optimizer = optim.Adam(self.ml.parameters(), lr=0.001)
-        criterion = nn.MSELoss()
-        for epoch in range(100):
-            optimizer.zero_grad()
-            outputs = self.ml(torch.FloatTensor(X_scaled))
-            loss = criterion(outputs, torch.FloatTensor(y).unsqueeze(1))
-            loss.backward()
-            optimizer.step()
-            if epoch % 10 == 0:
-                print(f"[ML Training] Epoch {epoch}: Loss={loss.item():.6f}")
-        best_params = None
-        best_R = float('inf')
-        bounds = [
-            (nm(250), nm(500)), (nm(200), nm(300)), (nm(150), nm(250)),
-            (nm(2), nm(8)), (nm(1), nm(4)), (0, 3), (1.4, 1.6), (0.0005, 0.005), (3.4, 3.6)
-        ]
-        valid_count = 0
-        invalid_count = 0
-        valid_samples = []
-        with tqdm(total=n_iterations, desc="Parallel Optimization") as pbar:
-            for i in range(n_iterations):
-                try:
-                    x_ml = self.ml_guided_sampling(bounds)
-                    params = {
-                        'height': x_ml[0],
-                        'period': x_ml[1],
-                        'base_width': x_ml[2],
-                        'rms_roughness': x_ml[3],
-                        'interface_roughness': x_ml[4],
-                        'profile_type': ['parabolic','conical','gaussian','quintic'][int(x_ml[5])],
-                        'refractive_index': x_ml[6],
-                        'extinction_coefficient': x_ml[7],
-                        'substrate_index': x_ml[8]
-                    }
-                    if self._validate_physical_constraints(params):
-                        valid_count += 1
-                        try:
-                            R = self.weighted_reflectance(params)
-                            self.ml.eval()
-                            with torch.no_grad():
-                                x_tensor = torch.FloatTensor(x_ml).unsqueeze(0)
-                                ml_pred = float(self.ml(x_tensor)[0])
-                            self.ml.train()
-                            self.optimization_history.append({
-                                'iteration': i,
-                                'params': params,
-                                'reflectance': R,
-                                'ml_prediction': ml_pred
-                            })
-                            valid_samples.append((params, R, ml_pred))
-                            print(f"[VALID] Iter {i}: Reflectance={R*100:.2f}% | ML Pred={ml_pred*100:.2f}% | Params={params}")
-                            if R < best_R and R > 0.01 and np.isfinite(R):
-                                best_R = R
-                                best_params = params
-                                logger.info(f"New best R: {best_R:.4f}")
-                        except Exception as e:
-                            logger.warning(f"Error calculating reflectance: {str(e)}")
-                            continue
-                    else:
-                        invalid_count += 1
-
-                except Exception as e:
-                    logger.warning(f"Error in optimization iteration: {str(e)}")
-                    continue
-                pbar.update(1)
-        logger.info(f"Optimization finished. Valid samples: {valid_count}, Invalid samples: {invalid_count}")
-        if best_params is None:
-            logger.error("ML-guided optimization failed to find valid parameters. Falling back to physics-based optimization.")
-            # Try physics-based optimization as fallback
-            try:
-                best_params, best_R = self.optimize(profile_type=profile_type)
-                print("[FALLBACK] Physics-based optimization result:")
-                print(f"Reflectance: {best_R*100:.2f}%")
-                print(f"Parameters: {best_params}")
-            except Exception as e:
-                logger.error(f"Physics-based optimization also failed: {str(e)}")
-                best_params = self._get_optimized_default_params(profile_type)
-                try:
-                    best_R = self.weighted_reflectance(best_params)
-                except Exception as e:
-                    logger.error(f"Error calculating default reflectance: {str(e)}")
-                    best_R = 0.1
-        # Print summary of all valid samples
-        if valid_samples:
-            print("\nSummary of all valid parameter sets:")
-            for idx, (params, R, ml_pred) in enumerate(valid_samples):
-                print(f"  {idx+1:2d}: Reflectance={R*100:.2f}% | ML Pred={ml_pred*100:.2f}% | Params={params}")
-        else:
-            print("No valid parameter sets found by ML-guided optimization.")
-        return best_params, best_R
-
-    def _get_profile_bounds(self, profile_type):
-        """Get parameter bounds for the specified profile type."""
-        # Common bounds for all parameters
-        bounds = {
-            'height': (nm(250), nm(500)),
-            'period': (nm(200), nm(300)),
-            'base_width': (nm(150), nm(250)),
-            'rms_roughness': (nm(2), nm(8)),
-            'interface_roughness': (nm(1), nm(4)),
-            'refractive_index': (1.4, 1.6),
-            'extinction_coefficient': (0.0005, 0.005),
-            'substrate_index': (3.4, 3.6)
-        }
-        
-        # Profile-specific adjustments
-        if profile_type == 'parabolic':
-            bounds['height'] = (nm(250), nm(450))
-            bounds['period'] = (nm(200), nm(280))
-        elif profile_type == 'conical':
-            bounds['height'] = (nm(280), nm(500))
-            bounds['period'] = (nm(220), nm(300))
-        elif profile_type == 'gaussian':
-            bounds['height'] = (nm(260), nm(480))
-            bounds['period'] = (nm(210), nm(290))
-        elif profile_type == 'quintic':
-            bounds['height'] = (nm(270), nm(490))
-            bounds['period'] = (nm(215), nm(295))
-            
-        return bounds
 
     def _get_optimized_default_params(self, profile_type):
         """Get optimized default parameters based on profile type."""
@@ -973,9 +744,11 @@ class MothEyeSimulator:
         yield_percent = 100 * (1.0 - 0.1 * (ar - 1) - 0.001 * (100 - min_feature * 1e9) - 0.05 * (params['rms_roughness'] * 1e9))
         return max(0, min(100, yield_percent))  # Ensure yield is between 0-100%
 
-    def multi_objective_score(self, params):
+    def multi_objective_score(self, params, weights=None):
         """Weighted sum objective: normal reflectance, angular, cost, yield."""
-        w1, w2, w3, w4 = 0.4, 0.3, 0.15, 0.15
+        if weights is None:
+            weights = {'reflectance': 0.4, 'angular': 0.3, 'cost': 0.15, 'yield': 0.15}
+        
         R_normal = self.weighted_reflectance(params)
         # Angular performance: mean reflectance from 0-80 deg
         angles = np.linspace(0, 80, 9)
@@ -984,7 +757,10 @@ class MothEyeSimulator:
         yield_ = self.calculate_manufacturing_yield(params)
         # Normalize cost (avoid division by zero)
         cost_norm = cost if cost > 0 else 1e6
-        score = w1*R_normal + w2*R_ang + w3*(1.0/cost_norm) + w4*(1.0-yield_)
+        score = (weights['reflectance'] * R_normal + 
+                weights['angular'] * R_ang + 
+                weights['cost'] * (1.0/cost_norm) + 
+                weights['yield'] * (1.0-yield_))
         return score
 
     def multi_objective_optimize(self, profile_type='parabolic', n_iterations=50, n_runs=10):
@@ -1736,18 +1512,171 @@ class MothEyeSimulator:
         plt.savefig(save_path)
         plt.close()
 
+    def advanced_optimize(self, profile_type='parabolic', method='differential_evolution'):
+        """Advanced optimization using multiple algorithms."""
+        from scipy.optimize import differential_evolution, basinhopping, dual_annealing
+        
+        bounds = self._get_profile_bounds(profile_type)
+        param_names = list(bounds.keys())
+        
+        def objective(x):
+            params = dict(zip(param_names, x))
+            params['profile_type'] = profile_type
+            if not self._validate_physical_constraints(params):
+                return 1e6  # Penalty for invalid parameters
+            return self.multi_objective_score(params)
+        
+        if method == 'differential_evolution':
+            result = differential_evolution(objective, [bounds[p] for p in param_names], 
+                                         maxiter=100, popsize=15, seed=42)
+        elif method == 'basin_hopping':
+            result = basinhopping(objective, [np.mean(bounds[p]) for p in param_names], 
+                                niter=50, seed=42)
+        elif method == 'dual_annealing':
+            result = dual_annealing(objective, [bounds[p] for p in param_names], 
+                                  maxiter=100, seed=42)
+        
+        best_params = dict(zip(param_names, result.x))
+        best_params['profile_type'] = profile_type
+        best_R = self.weighted_reflectance(best_params)
+        
+        return best_params, best_R, result.fun
+
+    def adaptive_bounds(self, profile_type, optimization_history, convergence_threshold=0.01):
+        """Dynamically adjust bounds based on optimization history."""
+        if not optimization_history:
+            return self._get_profile_bounds(profile_type)
+        
+        # Analyze successful parameters
+        successful_params = [h['params'] for h in optimization_history 
+                           if h['reflectance'] < convergence_threshold]
+        
+        if not successful_params:
+            return self._get_profile_bounds(profile_type)
+        
+        # Calculate adaptive bounds
+        adaptive_bounds = {}
+        for param in ['height', 'period', 'base_width', 'rms_roughness', 'interface_roughness']:
+            values = [p[param] for p in successful_params]
+            mean_val = np.mean(values)
+            std_val = np.std(values)
+            
+            # Tighten bounds around successful region
+            min_val = max(mean_val - 2*std_val, self._get_profile_bounds(profile_type)[param][0])
+            max_val = min(mean_val + 2*std_val, self._get_profile_bounds(profile_type)[param][1])
+            
+            adaptive_bounds[param] = (min_val, max_val)
+        
+        # Keep original bounds for other parameters
+        original_bounds = self._get_profile_bounds(profile_type)
+        for param in original_bounds:
+            if param not in adaptive_bounds:
+                adaptive_bounds[param] = original_bounds[param]
+        
+        return adaptive_bounds
+
+    def check_convergence(self, optimization_history, window_size=10, tolerance=1e-6):
+        """Check if optimization has converged based on recent history."""
+        if len(optimization_history) < window_size:
+            return False
+        
+        recent_reflectances = [h['reflectance'] for h in optimization_history[-window_size:]]
+        
+        # Check if improvement is below tolerance
+        improvement = abs(recent_reflectances[-1] - recent_reflectances[0])
+        if improvement < tolerance:
+            return True
+        
+        # Check if standard deviation is very low (converged to local minimum)
+        if np.std(recent_reflectances) < tolerance:
+            return True
+        
+        return False
+
+    def _get_profile_bounds(self, profile_type):
+        """Get parameter bounds for the specified profile type."""
+        # Common bounds for all parameters
+        bounds = {
+            'height': (nm(250), nm(500)),
+            'period': (nm(200), nm(300)),
+            'base_width': (nm(150), nm(250)),
+            'rms_roughness': (nm(2), nm(8)),
+            'interface_roughness': (nm(1), nm(4)),
+            'refractive_index': (1.4, 1.6),
+            'extinction_coefficient': (0.0005, 0.005),
+            'substrate_index': (3.4, 3.6)
+        }
+        # Profile-specific adjustments
+        if profile_type == 'parabolic':
+            bounds['height'] = (nm(250), nm(450))
+            bounds['period'] = (nm(200), nm(280))
+        elif profile_type == 'conical':
+            bounds['height'] = (nm(280), nm(500))
+            bounds['period'] = (nm(220), nm(300))
+        elif profile_type == 'gaussian':
+            bounds['height'] = (nm(260), nm(480))
+            bounds['period'] = (nm(210), nm(290))
+        elif profile_type == 'quintic':
+            bounds['height'] = (nm(270), nm(490))
+            bounds['period'] = (nm(215), nm(295))
+        return bounds
+
 # --- Main Workflow ---
 def main():
     sim = MothEyeSimulator()
     
+    # Configuration for different optimization strategies
+    optimization_configs = {
+        'conservative': {
+            'method': 'multi_objective_optimize',
+            'weights': {'reflectance': 0.5, 'angular': 0.3, 'cost': 0.1, 'yield': 0.1},
+            'n_runs': 5,
+            'n_iterations': 30
+        },
+        'balanced': {
+            'method': 'multi_objective_optimize', 
+            'weights': {'reflectance': 0.4, 'angular': 0.3, 'cost': 0.15, 'yield': 0.15},
+            'n_runs': 10,
+            'n_iterations': 50
+        },
+        'aggressive': {
+            'method': 'advanced_optimize',
+            'algorithm': 'differential_evolution',
+            'weights': {'reflectance': 0.6, 'angular': 0.2, 'cost': 0.1, 'yield': 0.1}
+        }
+    }
+    
     # Always compare all profiles by default
     print("\nComparing all profile types...")
     results = {}
+    
     for idx, profile in enumerate(['parabolic', 'conical', 'gaussian', 'quintic']):
         print(f"\nOptimizing {profile} profile...")
         try:
-            # Use multi-objective optimization for best results
-            best_params, best_R = sim.multi_objective_optimize(profile_type=profile)
+            # Try different optimization strategies
+            best_params = None
+            best_R = float('inf')
+            
+            for config_name, config in optimization_configs.items():
+                print(f"  Trying {config_name} optimization...")
+                
+                if config['method'] == 'multi_objective_optimize':
+                    params, R = sim.multi_objective_optimize(
+                        profile_type=profile,
+                        n_iterations=config['n_iterations'],
+                        n_runs=config['n_runs']
+                    )
+                elif config['method'] == 'advanced_optimize':
+                    params, R, _ = sim.advanced_optimize(
+                        profile_type=profile,
+                        method=config['algorithm']
+                    )
+                
+                if R < best_R:
+                    best_params = params
+                    best_R = R
+                    print(f"    New best: {R*100:.4f}%")
+            
             if best_params is not None and np.isfinite(best_R):
                 best_params['profile_type'] = profile
                 results[profile] = {
@@ -1765,7 +1694,6 @@ def main():
                     method = sim.manufacturing_method(best_params)
                     print(f"Recommended manufacturing method for optimized cone: {method}")
                     best_params['manufacturing_method'] = method
-                    # sim.plot_angular_response(best_params, fname_prefix='results/cone')  # Removed as per user request
                     # Add manufacturing yield
                     best_params['manufacturing_yield'] = sim.calculate_manufacturing_yield(best_params)
             else:

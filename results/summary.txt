@@ -36,19 +36,19 @@
   - Parameter and literature comparison
 
 ## Results
-  Best Profile        : parabolic
-  Best Reflectance (%) : 0.26
+  Best Profile        : gaussian
+  Best Reflectance (%) : 0.23
   Parameters:
-    - height              : 346.78 nm
-    - period              : 270.01 nm
-    - base_width          : 205.51 nm
-    - rms_roughness       : 2.13 nm
-    - interface_roughness : 3.59 nm
-    - refractive_index    : 1.5629
-    - extinction_coefficient: 3.64 mm
-    - substrate_index     : 3.4355
+    - height              : 397.09 nm
+    - period              : 277.23 nm
+    - base_width          : 212.68 nm
+    - rms_roughness       : 2.21 nm
+    - interface_roughness : 3.72 nm
+    - refractive_index    : 1.5746
+    - extinction_coefficient: 2.84 mm
+    - substrate_index     : 3.4252
     - manufacturing_method: Interference lithography or soft lithography (cost-effective for large area)
-    - manufacturing_yield : 93.0331
+    - manufacturing_yield : 91.5514
 
 All graphs and detailed reports are saved in the 'results' folder as images.
 
@@ -56,18 +56,18 @@ All graphs and detailed reports are saved in the 'results' folder as images.
 +-------------------------------+----------------------+----------------------+
 | Parameter                      | Moth-Eye              | Traditional           |
 +-------------------------------+----------------------+----------------------+
-| Reflectance (%)                | 0.26                  | 9.20                  |
+| Reflectance (%)                | 0.23                  | 9.20                  |
 | Angular Tolerance (deg)        | 60                    | 20                    |
 | Spectral Bandwidth (nm)        | 800                   | 400                   |
 | Manufacturing Cost ($/wafer)   | 100                   | 50                    |
-| Min Feature Size (nm)          | 205.51                | 100                   |
-| Aspect Ratio                   | 1.69                  | 1.00                  |
+| Min Feature Size (nm)          | 212.68                | 100                   |
+| Aspect Ratio                   | 1.87                  | 1.00                  |
 | Manufacturing Method           | Interference          | Interference          |
 |                                | lithography or soft   | lithography           |
 |                                | lithography (cost-    |                       |
 |                                | effective for large   |                       |
 |                                | area)                 |                       |
-| Manufacturing Yield (%)        | 93.03                 | 90                    |
+| Manufacturing Yield (%)        | 91.55                 | 90                    |
 | Lifetime Performance (yrs)     | 25                    | 10                    |
 | Environmental Stability        | 9                     | 6                     |
 | Scalability                    | 6                     | 8                     |
