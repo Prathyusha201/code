@@ -64,8 +64,6 @@ For questions, contact Prathyusha Murali Mohan Raju
 - Yamada et al. (2011)
 - Palik, Handbook of Optical Constants of Solids
 
-======================================================================
-
 ## Limitations and Future Work
 - No experimental fabrication or physical noise injection; results are simulation-based only.
 - Environmental effects (humidity, dust, UV) are modeled based on literature, not explicitly simulated.
