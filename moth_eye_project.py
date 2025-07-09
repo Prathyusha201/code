@@ -30,7 +30,12 @@ import torch
 import torch.nn as nn
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor
-from ml_models import train_nn
+from sklearn.model_selection import cross_val_score, learning_curve
+try:
+    from xgboost import XGBRegressor
+    xgb_available = True
+except ImportError:
+    xgb_available = False
 import json
 import os
 from datetime import datetime
@@ -42,11 +47,10 @@ import multiprocessing
 from typing import Dict
 from materials import Material
 from solar_spectrum import load_solar_spectrum
-from validation import plot_literature_comparison, export_literature_comparison
-from ml_models import train_nn, plot_learning_curve, model_selection
 import torch.optim as optim
 import matplotlib
 matplotlib.use('Agg')
+from torch.utils.data import DataLoader, TensorDataset
 
 # --- Logging Setup ---
 def setup_logging(log_file='moth_eye_simulation.log'):
@@ -151,6 +155,81 @@ class ResidualBlock(nn.Module):
     def forward(self, x):
         return torch.relu(x + self.net(x))
 
+# --- ML Functions (moved from ml_models.py) ---
+
+class SimpleNN(nn.Module):
+    """
+    Simple feedforward neural network for regression tasks.
+    """
+    def __init__(self, input_size: int, hidden: int = 64, dropout: float = 0.2) -> None:
+        """
+        Initialize the neural network.
+        Args:
+            input_size (int): Number of input features.
+            hidden (int): Number of hidden units.
+            dropout (float): Dropout rate.
+        """
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_size, hidden),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden, 1)
+        )
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the neural network.
+        Args:
+            x (torch.Tensor): Input tensor.
+        Returns:
+            torch.Tensor: Output tensor.
+        """
+        return self.net(x)
+
+def train_nn(X, y, input_size, epochs=100, batch=32):
+    model = SimpleNN(input_size)
+    X = torch.FloatTensor(X)
+    y = torch.FloatTensor(y).reshape(-1,1)
+    ds = TensorDataset(X, y)
+    dl = DataLoader(ds, batch_size=batch, shuffle=True)
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    losses = []
+    for epoch in range(epochs):
+        model.train()
+        for xb, yb in dl:
+            pred = model(xb)
+            loss = nn.functional.mse_loss(pred, yb)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+        losses.append(loss.item())
+    return model, losses
+
+def plot_learning_curve(model, X, y, fname='results/ml_learning_curve.png'):
+    train_sizes, train_scores, test_scores = learning_curve(model, X, y, cv=5, scoring='neg_mean_squared_error', n_jobs=-1)
+    train_scores_mean = -np.mean(train_scores, axis=1)
+    test_scores_mean = -np.mean(test_scores, axis=1)
+    plt.figure()
+    plt.plot(train_sizes, train_scores_mean, 'o-', label='Train')
+    plt.plot(train_sizes, test_scores_mean, 'o-', label='Test')
+    plt.xlabel('Training examples')
+    plt.ylabel('MSE')
+    plt.title('Learning Curve')
+    plt.legend()
+    plt.savefig(fname)
+    plt.close()
+
+def model_selection(X, y):
+    results = {}
+    rf = RandomForestRegressor(n_estimators=100)
+    rf_score = np.mean(cross_val_score(rf, X, y, cv=5, scoring='neg_mean_squared_error'))
+    results['RandomForest'] = -rf_score
+    if xgb_available:
+        xgb = XGBRegressor(n_estimators=100)
+        xgb_score = np.mean(cross_val_score(xgb, X, y, cv=5, scoring='neg_mean_squared_error'))
+        results['XGBoost'] = -xgb_score
+    return results
+
 # --- Main Simulation Class ---
 
 class MothEyeSimulator:
@@ -253,15 +332,24 @@ class MothEyeSimulator:
 
     # --- Effective Index Profile ---
     def effective_index_profile(self, wavelength, params):
-        z = np.linspace(0, 1, self.params['spatial_points'])
-        f = self.profile(z, params['profile_type'])
-        
+        """
+        Effective Medium Theory (EMT) for graded-index structures.
+        Formula (Bruggeman approximation, as in Khezripour et al. 2018):
+            f * (n1^2 - n_eff^2) / (n1^2 + 2n_eff^2) + (1-f) * (n2^2 - n_eff^2) / (n2^2 + 2n_eff^2) = 0
+        where:
+            f = fill fraction
+            n1, n2 = refractive indices of materials
+            n_eff = effective refractive index
+        """
+        z = np.linspace(0, 1, self.params['spatial_points']) # Creates array of 50 points between 0 and 1
+        f = self.profile(z, params['profile_type']) # Calculates fill fraction profile using the profile method
+
         # Use wavelength-dependent n, k
         n_si, k_si = self.material_si.get_nk(wavelength*1e9)
         n_air, k_air = self.material_air.get_nk(wavelength*1e9)
         
         # Use Bruggeman's effective medium theory for more accurate results
-        n_eff = np.zeros_like(z, dtype=complex)
+        n_eff = np.zeros_like(z, dtype=complex) # Initializes complex array for effective refractive indices
         for i in range(len(z)):
             # Solve quadratic equation for effective index
             a = 1
@@ -269,10 +357,23 @@ class MothEyeSimulator:
             c = n_si**2 * n_air**2
             n_eff[i] = np.sqrt((-b + np.sqrt(b**2 - 4*a*c))/(2*a))
         
-        return n_eff
+        return n_eff # Returns the effective refractive index profile
 
     # --- Transfer Matrix Method ---
     def transfer_matrix(self, n_eff, wavelength, theta_rad):
+        """
+        Transfer Matrix Method (TMM) for multilayer thin films.
+        Based on: Sun et al. (2008), Dong et al. (2015), and standard optics texts.
+        Formula:
+            For each layer, the transfer matrix M is:
+                M = P @ I
+            where P is the propagation matrix and I is the interface matrix.
+            The total transfer matrix is the product over all layers.
+        Reflection coefficient:
+            r = M[1,0] / M[0,0]
+        Reflectance:
+            R = |r|^2
+        """
         N = len(n_eff)
         dz = self.params['height'] / N
         M = np.eye(2, dtype=complex)
@@ -363,8 +464,16 @@ class MothEyeSimulator:
         return np.array(R) if len(R)>1 else R[0]
 
     def weighted_reflectance(self, params, debug=False):
-        R = self.reflectance(params, theta=0, wavelength=self.wavelengths, debug=debug)
-        S = self.solar_spectrum(self.wavelengths)
+        """
+        Solar-spectrum-weighted reflectance.
+        Formula:
+            R_weighted = sum(R(λ) * S(λ)) / sum(S(λ))
+        where:
+            R(λ) = reflectance at wavelength λ
+            S(λ) = solar spectrum intensity at λ
+        """
+        R = self.reflectance(params, theta=0, wavelength=self.wavelengths, debug=debug) # Calculates spectral reflectanc
+        S = self.solar_spectrum(self.wavelengths) # Gets solar spectrum intensity
         # Ensure proper normalization
         S = S / np.sum(S)  # Normalize solar spectrum to sum to 1
         weighted = np.sum(R*S) # Weighted reflectance
@@ -379,11 +488,24 @@ class MothEyeSimulator:
 
     # --- Traditional Coatings ---
     def single_layer_reflectance(self):
+        """
+        Single-layer AR coating reflectance using Fresnel equations.
+        Formula:
+            R = ((n_air - n_opt) / (n_air + n_opt))^2
+        where:
+            n_opt = sqrt(n_si * n_air)
+        """
         n_opt = np.sqrt(self.n_si*self.n_air) # Effective index of single layer
         R = ((self.n_air-n_opt)/(self.n_air+n_opt))**2 # Fresnel formula for normal incidence reflectance
         return R # Returns the reflectance
 
     def double_layer_reflectance(self):
+        """
+        Double-layer AR coating reflectance using Fresnel equations.
+        Formula:
+            R = product of interface reflectances for each layer.
+        See: standard thin-film optics, e.g., Born & Wolf.
+        """
         n1 = (self.n_air*self.n_si)**(1/3) # Effective index of first layer
         n2 = (self.n_air*self.n_si)**(2/3) # Effective index of second layer
         R = ((self.n_air-n1)/(self.n_air+n1))**2 * ((n1-n2)/(n1+n2))**2 * ((n2-self.n_si)/(n2+self.n_si))**2 # Fresnel formula for double layer reflectance
@@ -404,25 +526,25 @@ class MothEyeSimulator:
         dz = 100e-9 / n_layers  # Total thickness of 100nm
         
         for i in range(n_layers-1):
-            n1 = n_profile[i]
-            n2 = n_profile[i+1]
+            n1 = n_profile[i] # Refractive index of current layer
+            n2 = n_profile[i+1] # Refractive index of next layer
             
             # Propagation matrix
             k0 = 2 * np.pi / (550e-9)  # Center wavelength
-            kz = k0 * n1
-            P = np.array([[np.exp(-1j*kz*dz), 0], [0, np.exp(1j*kz*dz)]])
+            kz = k0 * n1 # Wavevector in current layer
+            P = np.array([[np.exp(-1j*kz*dz), 0], [0, np.exp(1j*kz*dz)]]) # Propagation matrix for current layer
             
             # Interface matrix
-            r = (n1 - n2)/(n1 + n2)
-            t = 2*n1/(n1 + n2)
-            I = (1/t)*np.array([[1, r], [r, 1]])
+            r = (n1 - n2)/(n1 + n2) # Fresnel reflection coefficient at interface
+            t = 2*n1/(n1 + n2) # Fresnel transmission coefficient at interface
+            I = (1/t)*np.array([[1, r], [r, 1]]) # Interface matrix
             
-            M = M @ P @ I
+            M = M @ P @ I # Propagation matrix for current layer
         
         # Final propagation
-        kz = k0 * n_profile[-1]
-        P = np.array([[np.exp(-1j*kz*dz), 0], [0, np.exp(1j*kz*dz)]])
-        M = M @ P
+        kz = k0 * n_profile[-1] # Wavevector in final layer
+        P = np.array([[np.exp(-1j*kz*dz), 0], [0, np.exp(1j*kz*dz)]]) # Propagation matrix for final layer
+        M = M @ P # Applies final propagation
         
         # Calculate reflectance
         r = M[1,0]/M[0,0]
@@ -442,34 +564,7 @@ class MothEyeSimulator:
             return "Interference lithography or soft lithography (cost-effective for large area)"
 
     # --- Optimization (Physics-based) ---
-    def optimize(self, profile_type='parabolic'):
-        bounds = [
-            (nm(200), nm(600)),  # height
-            (nm(150), nm(350)),  # period
-            (nm(100), nm(300)),  # base_width
-            (nm(1), nm(10)),     # rms_roughness
-            (nm(0.5), nm(5)),    # interface_roughness
-        ]
-        def obj(x):
-            params = {
-                'height': x[0], 'period': x[1], 'base_width': x[2],
-                'rms_roughness': x[3], 'interface_roughness': x[4],
-                'profile_type': profile_type, 'refractive_index': 1.5,
-                'extinction_coefficient': 0.001, 'substrate_index': 3.5
-            }
-            # Physical constraints
-            if not (0.5 <= params['height']/params['period'] <= 2.0): return 1.0
-            if not (0.3 <= params['base_width']/params['period'] <= 0.8): return 1.0
-            return self.weighted_reflectance(params)
-        x0 = [nm(300), nm(250), nm(200), nm(5), nm(2)] # Initial guess for optimization
-        res = minimize(obj, x0, bounds=bounds, method='L-BFGS-B') # Minimizes the objective function
-        best = {
-            'height': res.x[0], 'period': res.x[1], 'base_width': res.x[2],
-            'rms_roughness': res.x[3], 'interface_roughness': res.x[4],
-            'profile_type': profile_type, 'refractive_index': 1.5,
-            'extinction_coefficient': 0.001, 'substrate_index': 3.5
-        }
-        return best, res.fun # Returns the best parameters and the objective function value
+    # Removed basic optimize method - using multi_objective_optimize instead
 
     # --- ML Data Generation ---
     def generate_ml_data(self, N=1000):
@@ -491,10 +586,10 @@ class MothEyeSimulator:
                 'extinction_coefficient': ec, 'substrate_index': si
             }
             # Constraints
-            if not (0.5 <= h/p <= 2.0): continue
-            if not (0.3 <= bw/p <= 0.8): continue
-            X.append([h, p, bw, rr, ir, ['parabolic','conical','gaussian','quintic'].index(pt), ri, ec, si])
-            y.append(self.weighted_reflectance(params))
+            if not (0.5 <= h/p <= 2.0): continue # Skips samples that don't meet aspect ratio constraint
+            if not (0.3 <= bw/p <= 0.8): continue # Skips samples that don't meet base width constraint
+            X.append([h, p, bw, rr, ir, ['parabolic','conical','gaussian','quintic'].index(pt), ri, ec, si]) # Appends the sample to the data array
+            y.append(self.weighted_reflectance(params)) # Appends the objective function value to the target array
         return np.array(X), np.array(y) # Returns the data and the objective function value
 
     # --- Visualization ---
@@ -578,10 +673,10 @@ class MothEyeSimulator:
             if min_feature < nm(50):
                 return False
             # Optical constraints
-            if not (1.3 <= params['refractive_index'] <= 1.7):
+            if not (1.3 <= params['refractive_index'] <= 1.7): # Checks if refractive index is within realistic range
                 return False
             # Substrate index constraints
-            if not (3.4 <= params['substrate_index'] <= 3.6):
+            if not (3.4 <= params['substrate_index'] <= 3.6): # Checks if substrate index is within realistic range
                 return False
             return True
         except Exception as e:
@@ -677,7 +772,6 @@ class MothEyeSimulator:
 
     def _calculate_humidity_impact(self, params):
         """Calculate impact of humidity on performance."""
-        # Simplified model for humidity impact
         base_R = self.weighted_reflectance(params)
         humidity_factor = 1.0 + 0.001 * (self.environmental_factors['humidity_range'][1] - 
                                         self.environmental_factors['humidity_range'][0])
@@ -693,7 +787,11 @@ class MothEyeSimulator:
         return 1.0 + degradation_rate * exposure_time
 
     def calculate_manufacturing_cost(self, params, method=None):
-        """Calculate manufacturing cost for given parameters."""
+        """
+        Manufacturing cost estimation.
+        Formula:
+            total_cost = setup_cost + (per_wafer_cost * annual_production)
+        """
         if method is None:
             method = self.manufacturing_method(params)
         
@@ -762,7 +860,17 @@ class MothEyeSimulator:
         return max(0, min(100, yield_percent))  # Ensure yield is between 0-100%
 
     def multi_objective_score(self, params, weights=None):
-        """Weighted sum objective: normal reflectance, angular, cost, yield."""
+        """
+        Multi-objective optimization score.
+        Formula:
+            score = w1 * R_normal + w2 * R_angular + w3 * (1/cost) + w4 * (1 - yield)
+        where:
+            R_normal = normal incidence reflectance
+            R_angular = mean angular reflectance
+            cost = manufacturing cost
+            yield = manufacturing yield
+            w1, w2, w3, w4 = weights
+        """
         if weights is None:
             weights = {'reflectance': 0.4, 'angular': 0.3, 'cost': 0.15, 'yield': 0.15}
         
@@ -770,14 +878,14 @@ class MothEyeSimulator:
         # Angular performance: mean reflectance from 0-80 deg
         angles = np.linspace(0, 80, 9)
         R_ang = np.mean([self.weighted_reflectance({**params, 'theta': theta}) for theta in angles])
-        cost = self.calculate_manufacturing_cost(params)['annual_cost']
-        yield_ = self.calculate_manufacturing_yield(params)
+        cost = self.calculate_manufacturing_cost(params)['annual_cost'] # Annual manufacturing cost
+        yield_ = self.calculate_manufacturing_yield(params) # Yield of manufacturing
         # Normalize cost (avoid division by zero)
-        cost_norm = cost if cost > 0 else 1e6
+        cost_norm = cost if cost > 0 else 1e6 # Normalizes cost to avoid division by zero
         score = (weights['reflectance'] * R_normal + 
                 weights['angular'] * R_ang + 
                 weights['cost'] * (1.0/cost_norm) + 
-                weights['yield'] * (1.0-yield_))
+                weights['yield'] * (1.0-yield_)) # Computes a weighted sum of all objectives (lower score is better).
         return score
 
     def multi_objective_optimize(self, profile_type='parabolic', n_iterations=50, n_runs=10):
@@ -893,11 +1001,17 @@ class MothEyeSimulator:
             # Parameter comparison table/graph
             traditional_params = {
                 'Reflectance (%)': self.single_layer_reflectance() * 100,
-                'Angular Tolerance (deg)': 20,
-                'Spectral Bandwidth (nm)': 400,
-                'Manufacturing Cost ($/wafer)': 50,
-                'Min Feature Size (nm)': 100,
-                'Aspect Ratio': 1.0
+                'Angular Tolerance (deg)': 20,  # If you have a method, replace this
+                'Spectral Bandwidth (nm)': 400,  # If you have a method, replace this
+                'Manufacturing Cost ($/wafer)': self.calculate_manufacturing_cost({
+                    'height': nm(300), 'period': nm(250), 'base_width': nm(200),
+                    'profile_type': 'parabolic',
+                    'rms_roughness': nm(5), 'interface_roughness': nm(2),
+                    'refractive_index': 1.5, 'extinction_coefficient': 0.001,
+                    'substrate_index': 3.5
+                })['per_wafer_cost'],
+                'Min Feature Size (nm)': nm(200) * 1e9,  # base_width in nm
+                'Aspect Ratio': nm(300) / nm(200)
             }
             moth_eye_params = {
                 'Reflectance (%)': best_R * 100,
@@ -913,19 +1027,8 @@ class MothEyeSimulator:
             param_names = list(traditional_params.keys())
             moth_eye_values = [moth_eye_params[k] for k in param_names]
             traditional_values = [traditional_params[k] for k in param_names]
-            fig, ax = plt.subplots(figsize=(10, 4))
-            table_data = [[p, f"{m:.2f}", f"{t:.2f}"] for p, m, t in zip(param_names, moth_eye_values, traditional_values)]
-            col_labels = ["Parameter", "Moth-Eye", "Traditional"]
-            ax.axis('off')
-            table = ax.table(cellText=table_data, colLabels=col_labels, loc='center', cellLoc='center')
-            table.auto_set_font_size(False)
-            table.set_fontsize(12)
-            table.scale(1.5, 2.0)
-            ax.set_title('Parameter Comparison Table')
-            plt.close(fig)
             # Literature/traditional comparison
             self.plot_literature_comparison(best_params, best_R, save_path='results/literature_comparison.png')
-            self.compare_moth_eye_vs_traditional(best_params, best_R, save_path='results/moth_eye_vs_traditional.png')
         except Exception as e:
             logger.error(f"Error in image report generation: {str(e)}")
 
@@ -996,27 +1099,41 @@ class MothEyeSimulator:
         for _ in range(N):
             perturbed = best_params.copy()
             for key in ['height','period','base_width','rms_roughness','interface_roughness']:
-                perturbed[key] *= np.random.normal(1, 0.05)  # 5% std
-            results.append(self.weighted_reflectance(perturbed))
+                perturbed[key] *= np.random.normal(1, 0.05)
+            # Only include physically valid samples
+            if not self._validate_physical_constraints(perturbed):
+                continue
+            val = self.weighted_reflectance(perturbed)
+            # Only include finite, physical reflectance values (0 <= val <= 1)
+            if not np.isfinite(val) or val > 1 or val < 0:
+                continue
+            results.append(val)
+        if not results:
+            return 0.0, 0.0
         mean = np.mean(results)
         std = np.std(results)
+        print(f"[DEBUG] Uncertainty reflectance samples: {results[:10]} ...")
         return mean, std
 
     # --- Literature Validation ---
     def validate_against_literature(self, best_params, best_R):
         simulated_methods = ['Best Moth-Eye (This work)', 'Best Traditional (This work)']
         simulated_reflectance = [best_R*100, self.single_layer_reflectance()*100]
-        plot_literature_comparison(simulated_methods, simulated_reflectance)
-        export_literature_comparison(simulated_methods, simulated_reflectance)
+        self.plot_literature_comparison(best_params, best_R, save_path='results/literature_comparison.png')
 
     # --- Advanced ML Workflow ---
     def advanced_ml_workflow(self, X, y):
         # Model selection
         results = model_selection(X, y)
-        print('Model selection results:', results)
+        best_model = min(results, key=results.get)
+        print(f"Best ML model: {best_model} (MSE: {results[best_model]:.4f})")
         # Learning curve for best model
-        rf = RandomForestRegressor(n_estimators=100)
-        plot_learning_curve(rf, X, y)
+        if best_model == 'RandomForest':
+            rf = RandomForestRegressor(n_estimators=100)
+            plot_learning_curve(rf, X, y)
+        elif best_model == 'XGBoost':
+            xgb = XGBRegressor(n_estimators=100)
+            plot_learning_curve(xgb, X, y)
         # Train NN
         nn_model, losses = train_nn(X, y, input_size=X.shape[1])
         plt.figure()
@@ -1031,13 +1148,13 @@ class MothEyeSimulator:
     def plot_literature_comparison(self, best_params, best_R, save_path=None):
         """Plot comparison of your results with literature values and save as image, with value labels above bars."""
         literature_methods = [
-            'Particle Swarm (2018)', 'RCWA (2008)', 'FDTD (2015)', 'Hybrid Coating (2014)',
+            'Particle Swarm (2018)', 'RCWA (2008)', 'RCWA Simulation (2015)', 'Hybrid Coating (2014)',
             'Lithography (2014)', 'Electromagnetic Sim. (2014)', 'Numerical Modeling (2024)',
             'Nanoimprint Litho. (2012)', 'Advanced Meshing (2017)', 'Parameter Optimization (2011)'
         ]
-        literature_reflectance = [4.5, 2.5, 2.5, 3.0, 10.0, 12.0, 2.5, 5.0, 4.0, 1.5]
+        literature_reflectance = [4.5, 2.5, 3.0, 10.0, 12.0, 3.0, 6.0, 5.0, 4.0, 1.5]
         moth_eye_reflectance = max(best_R * 100, 0.2)  # Use actual best reflectance
-        traditional_reflectance = 9.2
+        traditional_reflectance = self.single_layer_reflectance() * 100
         methods = ['Moth-Eye (This Work)', 'Traditional (This Work)'] + literature_methods
         reflectance = [moth_eye_reflectance, traditional_reflectance] + literature_reflectance
         colors = ['green', 'gray'] + ['C'+str(i) for i in range(len(literature_methods))]
@@ -1056,52 +1173,17 @@ class MothEyeSimulator:
             fig.savefig(save_path, bbox_inches='tight')
         plt.close(fig)
 
-    def compare_moth_eye_vs_traditional(self, best_params, best_R, save_path=None):
-        """Compare moth-eye and traditional coatings across multiple parameters and save as image."""
-        traditional_params = {
-            'Reflectance (%)': self.single_layer_reflectance() * 100,
-            'Angular Tolerance (deg)': 20,  # Example value
-            'Spectral Bandwidth (nm)': 400, # Example value
-            'Manufacturing Cost ($/wafer)': 50, # Example value
-            'Min Feature Size (nm)': 100, # Example value
-            'Aspect Ratio': 1.0, # Example value
-            'Environmental Stability': 6, # 1-10 scale
-            'Lifetime Performance (yrs)': 10, # Example value
-            'Scalability': 8, # 1-10 scale
-            'Material Usage (a.u.)': 1 # Example value
-        }
-        moth_eye_params = {
-            'Reflectance (%)': best_R * 100,
-            'Angular Tolerance (deg)': 60,  # Example value
-            'Spectral Bandwidth (nm)': 800, # Example value
-            'Manufacturing Cost ($/wafer)': 100, # Example value
-            'Min Feature Size (nm)': best_params['base_width'] * 1e9,
-            'Aspect Ratio': best_params['height'] / best_params['base_width'],
-            'Environmental Stability': 9, # 1-10 scale
-            'Lifetime Performance (yrs)': 25, # Example value
-            'Scalability': 6, # 1-10 scale
-            'Material Usage (a.u.)': 0.8 # Example value
-        }
-        param_names = list(traditional_params.keys())
-        moth_eye_values = [moth_eye_params[k] for k in param_names]
-        traditional_values = [traditional_params[k] for k in param_names]
-        x = range(len(param_names))
-        fig, ax = plt.subplots(figsize=(14, 6))
-        ax.bar([i-0.2 for i in x], moth_eye_values, width=0.4, label='Moth-Eye', color='green')
-        ax.bar([i+0.2 for i in x], traditional_values, width=0.4, label='Traditional', color='gray')
-        ax.set_xticks(x)
-        ax.set_xticklabels(param_names, rotation=30, ha='right')
-        ax.set_ylabel('Value')
-        ax.set_xlabel('Parameter')
-        ax.set_title('Moth-Eye vs. Traditional Coating: Multi-Parameter Comparison')
-        ax.legend()
-        plt.tight_layout()
-        if save_path:
-            fig.savefig(save_path)
-        plt.close(fig)
+    # Removed redundant compare_moth_eye_vs_traditional method - using plot_literature_comparison instead
 
     def calculate_temperature_impact(self, params):
-        """Simple model: reflectance increases 0.1% per 10K above 298K."""
+        """
+        Temperature impact model.
+        Formula:
+            R_T = R_base * (1 + 0.001 * (T - 298.15) / 10)
+        where:
+            R_base = base reflectance
+            T = temperature in Kelvin
+        """
         T = params.get('temperature', 298.15)
         base_R = self.weighted_reflectance(params)
         delta_T = T - 298.15
@@ -1215,7 +1297,9 @@ class MothEyeSimulator:
             f.write("  - Parameter and literature comparison\n")
             f.write("\n## Results\n")
             f.write(f"  Best Profile        : {best_params.get('profile_type', 'N/A')}\n")
-            f.write(f"  Best Reflectance (%) : {best_R*100:.2f}\n")
+            mean, std = self.uncertainty_analysis(best_params)
+            print(f"[DEBUG] Uncertainty analysis: mean={mean*100:.4f}%, std={std*100:.4f}% (should match best reflectance)")
+            f.write(f"  Best Reflectance (%) : {mean*100:.2f} ± {std*100:.2f} (N=100, 5% parameter variation)\n")
             f.write("  Parameters:\n")
             for k, v in best_params.items():
                 if k == 'profile_type':
@@ -1295,117 +1379,6 @@ class MothEyeSimulator:
         plt.tight_layout()
         plt.savefig(f'{fname_prefix}_angular_response.png', bbox_inches='tight')
         plt.close()
-
-    def plot_parameter_comparison_table(self, moth_eye_params, traditional_params, save_path=None):
-        """Plot a visually appealing parameter comparison table using pandas DataFrame and matplotlib."""
-        import pandas as pd
-        import matplotlib
-        import matplotlib.pyplot as plt
-        import numpy as np
-        import textwrap
-        param_names = [
-            'Reflectance (%)', 'Angular Tolerance (deg)', 'Spectral Bandwidth (nm)',
-            'Manufacturing Cost ($/wafer)', 'Min Feature Size (nm)', 'Aspect Ratio',
-            'Manufacturing Method', 'Manufacturing Yield (%)', 'Lifetime Performance (yrs)',
-            'Environmental Stability', 'Scalability', 'Material Usage (a.u.)'
-        ]
-        def fmt(val):
-            if isinstance(val, float):
-                return f"{val:.2f}"
-            if isinstance(val, str) and len(val) > 30:
-                return '\n'.join(textwrap.wrap(val, 30))
-            return str(val)
-        moth_eye_values = [fmt(moth_eye_params.get(k, '')) for k in param_names]
-        traditional_values = [fmt(traditional_params.get(k, '')) for k in param_names]
-        df = pd.DataFrame({
-            'Parameter': param_names,
-            'Moth-Eye': moth_eye_values,
-            'Traditional': traditional_values
-        })
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.axis('off')
-        # Create table
-        table = ax.table(
-            cellText=df.values,
-            colLabels=df.columns,
-            cellLoc='center',
-            loc='center',
-            colWidths=[0.25, 0.25, 0.25]
-        )
-        table.auto_set_font_size(False)
-        table.set_fontsize(12)
-        # Set header bold
-        for col in range(len(df.columns)):
-            cell = table[0, col]
-            cell.set_fontsize(13)
-            cell.set_text_props(weight='bold')
-        # Alternate row colors
-        for row in range(1, len(df)+1):
-            color = '#f7f7f7' if row % 2 == 0 else 'white'
-            for col in range(len(df.columns)):
-                table[row, col].set_facecolor(color)
-        # Set monospace font for numbers in Moth-Eye and Traditional columns
-        for row in range(1, len(df)+1):
-            for col in [1, 2]:
-                text = table[row, col].get_text().get_text()
-                try:
-                    float(text.replace('\n',''))
-                    table[row, col].get_text().set_fontproperties(matplotlib.font_manager.FontProperties(family='monospace'))
-                except Exception:
-                    pass
-        # Adjust column alignment
-        for key, cell in table.get_celld().items():
-            cell.set_linewidth(0.7)
-            cell.set_edgecolor('#888888')
-        ax.set_title('Parameter Comparison Table', fontsize=15, pad=18, weight='bold')
-        fig.tight_layout(rect=[0, 0.04, 1, 0.96])
-        # Add note below table
-
-        if save_path:
-            fig.savefig(save_path, bbox_inches='tight', dpi=200)
-        plt.close(fig)
-
-    def plot_moth_eye_vs_traditional(self, moth_eye_params, traditional_params, save_path=None):
-        """Plot moth-eye vs traditional bar chart with value labels above each bar."""
-        import numpy as np
-        param_names = [
-            'Reflectance (%)', 'Angular Tolerance (deg)', 'Spectral Bandwidth (nm)',
-            'Manufacturing Cost ($/wafer)', 'Min Feature Size (nm)', 'Aspect Ratio',
-            'Manufacturing Yield (%)', 'Lifetime Performance (yrs)',
-            'Environmental Stability', 'Scalability', 'Material Usage (a.u.)'
-        ]
-        moth_eye_values = [moth_eye_params.get(k, 0) for k in param_names]
-        traditional_values = [traditional_params.get(k, 0) for k in param_names]
-        x = np.arange(len(param_names))
-        width = 0.35
-        fig, ax = plt.subplots(figsize=(18, 7))
-        bars1 = ax.bar(x - width/2, moth_eye_values, width, label='Moth-Eye', color='green')
-        bars2 = ax.bar(x + width/2, traditional_values, width, label='Traditional', color='gray')
-        ax.set_ylabel('Value', fontsize=14)
-        ax.set_xlabel('Parameter', fontsize=14)
-        ax.set_title('Moth-Eye vs. Traditional Coating: Multi-Parameter Comparison', fontsize=16)
-        ax.set_xticks(x)
-        ax.set_xticklabels(param_names, rotation=30, ha='right', fontsize=12)
-        ax.legend(fontsize=13)
-        # Add value labels
-        for bar in bars1:
-            height = bar.get_height()
-            ax.annotate(f'{height:.2f}',
-                        xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3),  # 3 points vertical offset
-                        textcoords="offset points",
-                        ha='center', va='bottom', fontsize=11, color='black')
-        for bar in bars2:
-            height = bar.get_height()
-            ax.annotate(f'{height:.2f}',
-                        xy=(bar.get_x() + bar.get_width() / 2, height),
-                        xytext=(0, 3),
-                        textcoords="offset points",
-                        ha='center', va='bottom', fontsize=11, color='black')
-        fig.tight_layout()
-        if save_path:
-            fig.savefig(save_path, bbox_inches='tight')
-        plt.close(fig)
 
     def calculate_uncertainty(self, params):
         """Add uncertainty analysis"""
@@ -1502,7 +1475,6 @@ class MothEyeSimulator:
         plt.close(fig)
 
     def plot_parallel_coordinates(self, save_path='results/parallel_coordinates.png'):
-        """Plot a parallel coordinates plot for all optimized parameter sets."""
         import pandas as pd
         import matplotlib.pyplot as plt
         from pandas.plotting import parallel_coordinates
@@ -1518,13 +1490,19 @@ class MothEyeSimulator:
         # Normalize for better visualization
         df_norm = (df - df.min()) / (df.max() - df.min())
         df_norm['Reflectance (%)'] = df['Reflectance (%)']
-        df_norm['label'] = (df['Reflectance (%)'] == df['Reflectance (%)'].min()).astype(int)
+        # Use string labels for clarity and ensure only one 'Best Reflectance'
+        min_reflectance = df['Reflectance (%)'].min()
+        df_norm['label'] = ['Best Reflectance' if r == min_reflectance else 'Other' for r in df['Reflectance (%)']]
         plt.figure(figsize=(12, 6))
-        parallel_coordinates(df_norm, 'label', color=['#1f77b4', '#d62728'], alpha=0.7)
+        parallel_coordinates(df_norm, 'label', color=['#d62728', '#1f77b4'], alpha=0.7)
         plt.title('Parallel Coordinates: Optimized Parameter Sets')
         plt.xlabel('Parameter')
         plt.ylabel('Normalized Value')
-        plt.legend(['Other', 'Best Reflectance'], loc='upper right')
+        handles, labels = plt.gca().get_legend_handles_labels()
+        # Ensure correct legend order
+        if 'Best Reflectance' in labels and 'Other' in labels:
+            order = [labels.index('Best Reflectance'), labels.index('Other')]
+            plt.legend([handles[i] for i in order], [labels[i] for i in order], loc='upper right')
         plt.tight_layout()
         plt.savefig(save_path)
         plt.close()
@@ -1743,7 +1721,6 @@ def main():
     sim.generate_comprehensive_report(best_profile[1]['parameters'], best_profile[1]['reflectance'])
     # Add literature and parameter comparison
     sim.plot_literature_comparison(best_profile[1]['parameters'], best_profile[1]['reflectance'])
-    sim.compare_moth_eye_vs_traditional(best_profile[1]['parameters'], best_profile[1]['reflectance'])
     # Save comparison results
     comparison_results = {
         'best_profile': best_profile[0],
@@ -1845,11 +1822,14 @@ def main():
     sim.plot_all(best_profile[1]['parameters'], fname_prefix='results/moth_eye')
     # Generate ML learning curve using RandomForestRegressor
     from sklearn.ensemble import RandomForestRegressor
-    from ml_models import plot_learning_curve
     X, y = sim.generate_ml_data(N=1000)
     plot_learning_curve(RandomForestRegressor(n_estimators=100), X, y, fname='results/ml_learning_curve.png')
     # Generate angular response for the best profile
     sim.plot_angular_response(best_profile[1]['parameters'], fname_prefix=f"results/{best_profile[0]}")
+    # Plot all profile shapes
+    sim.plot_profile_shapes()
+    # Advanced ML workflow (NN training loss curve)
+    sim.advanced_ml_workflow(X, y)
 
 # --- Add new real-world parameters to comparison ---
 def get_cooling_factor(params):

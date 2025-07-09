@@ -37,7 +37,7 @@
 
 ## Results
   Best Profile        : gaussian
-  Best Reflectance (%) : 0.23
+  Best Reflectance (%) : 0.24 ± 0.03 (N=100, 5% parameter variation)
   Parameters:
     - height              : 397.09 nm
     - period              : 277.23 nm

@@ -30,7 +30,7 @@ python test_moth_eye.py
 
 ## Project Structure
 - `moth_eye_project.py`: Main simulation and optimization code
-- `ml_models.py`, `materials.py`, `solar_spectrum.py`, `validation.py`: Supporting modules
+- `materials.py`, `solar_spectrum.py`: Supporting modules
 - `test_moth_eye.py`: Automated tests
 - `results/`: Output folder for all results and plots
 
