@@ -23,36 +23,47 @@ References:
 - Palik, Handbook of Optical Constants of Solids
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.optimize import minimize
-import torch
-import torch.nn as nn
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.model_selection import cross_val_score, learning_curve
+import numpy as np # for numerical operations
+import matplotlib.pyplot as plt # for plotting
+from scipy.optimize import minimize # for optimization
+import torch # for machine learning
+import torch.nn as nn # for neural networks
+from sklearn.preprocessing import StandardScaler # for data preprocessing
+from sklearn.ensemble import RandomForestRegressor # for random forest regression
+from sklearn.model_selection import cross_val_score, learning_curve # for model selection and evaluation
 try:
-    from xgboost import XGBRegressor
+    from xgboost import XGBRegressor # for XGBoost regression
     xgb_available = True
 except ImportError:
-    xgb_available = False
-import json
-import os
-from datetime import datetime
-import logging
-from matplotlib.backends.backend_pdf import PdfPages
-import seaborn as sns
-from tqdm import tqdm
-import multiprocessing
-from typing import Dict
-from materials import Material
-from solar_spectrum import load_solar_spectrum
-import torch.optim as optim
+    xgb_available = False # if XGBoost is not installed, set to False
+import json # for JSON file operations
+import os # for file operations
+from datetime import datetime # for date and time operations
+import logging # for logging
+from matplotlib.backends.backend_pdf import PdfPages # for PDF file operations
+import seaborn as sns # for plotting
+from tqdm import tqdm # for progress bar
+import multiprocessing # for parallel processing
+from typing import Dict # for type hints
+from materials import Material # for material properties
+from solar_spectrum import load_solar_spectrum # for solar spectrum
+import torch.optim as optim # for optimization
 import matplotlib
-matplotlib.use('Agg')
-from torch.utils.data import DataLoader, TensorDataset
+matplotlib.use('Agg') # for Agg backend
+from torch.utils.data import DataLoader, TensorDataset # for data loading
+from scipy.optimize import root_scalar
+import time
+import functools
+
+# Add this after all imports, before any code uses DEBUG_MODE
+DEBUG_MODE = False  # Set to False for full-accuracy/final runs. Controls optimization and ML data size for debugging.
 
 # --- Logging Setup ---
+# Defines a function to set up logging for the simulation.
+# Creates a logger named 'moth_eye' at INFO level.
+# Removes any existing handlers to avoid duplicate logs.
+# Adds a stream handler (console output) with a simple format.
+# Instantiates the logger for use throughout the file.
 def setup_logging(log_file='moth_eye_simulation.log'):
     logger = logging.getLogger('moth_eye')
     logger.setLevel(logging.INFO)
@@ -69,19 +80,29 @@ logger = setup_logging()
 
 # --- Utility Functions ---
 
-def nm(x): return x * 1e-9
-def to_nm(x): return x / 1e-9
+def nm(x): return x * 1e-9 # converts from meters to nanometers
+def to_nm(x): return x / 1e-9 # converts from nanometers to meters
 
+# Saves data to a JSON file.
+# Opens the file in write mode with 4-space indentation.
+# Writes the data to the file in JSON format.
 def save_json(data, fname):
     with open(fname, 'w') as f:
         json.dump(data, f, indent=4)
 
+# Ensures a directory exists.
+# Checks if the directory exists, and creates it if it doesn't.
 def ensure_dir(path):
     if not os.path.exists(path):
-        os.makedirs(path)
+        os.makedirs(path) # creates the directory
 
 # --- ML Model ---
-
+# Input shape handling: Ensures input is 2D (batch, features).
+# Feature check: Expects 9 features (e.g., geometric and material parameters).
+# BatchNorm: Skips batch normalization if batch size is 1 during training (to avoid instability).
+# Residual blocks: Passes through two residual blocks for deep feature extraction.
+# Attention: A small neural network that computes attention weights for each sample in the batch, using a tanh activation and softmax normalization.
+# Output: Two-layer MLP with LeakyReLU and dropout, outputting a single value (regression).
 class EnhancedMothEyeML(nn.Module):
     """Enhanced ML model with residual connections and attention."""
     def __init__(self, input_size=9, hidden=128, dropout=0.2):
@@ -140,6 +161,10 @@ class EnhancedMothEyeML(nn.Module):
         
         return self.output(x)
 
+# Implements a residual block:
+# y = ReLU(x + F(x))
+# where F(x) is a two-layer MLP with batch norm, LeakyReLU, and dropout.
+# Residual connections help with training deeper networks by allowing gradients to flow more easily.
 class ResidualBlock(nn.Module):
     def __init__(self, dim, dropout):
         super().__init__()
@@ -151,11 +176,11 @@ class ResidualBlock(nn.Module):
             nn.Linear(dim, dim),
             nn.BatchNorm1d(dim)
         )
-        
+# Forward pass: Applies the MLP to x, then adds it to x and applies ReLU.
     def forward(self, x):
         return torch.relu(x + self.net(x))
 
-# --- ML Functions (moved from ml_models.py) ---
+# --- ML Functions  ---
 
 class SimpleNN(nn.Module):
     """
@@ -166,8 +191,9 @@ class SimpleNN(nn.Module):
         Initialize the neural network.
         Args:
             input_size (int): Number of input features.
-            hidden (int): Number of hidden units.
-            dropout (float): Dropout rate.
+            hidden (int): Number of hidden units (default 64).
+            dropout (float): Dropout rate (default 0.2).
+        The network structure: Linear layer → ReLU → Dropout → Linear layer (output is a single value).
         """
         super().__init__()
         self.net = nn.Sequential(
@@ -186,7 +212,23 @@ class SimpleNN(nn.Module):
         """
         return self.net(x)
 
+# Trains a SimpleNN on data X (features) and y (targets).
+# Converts data to PyTorch tensors, creates a dataset and data loader for batching.
+# Uses Adam optimizer with learning rate 0.001.
+# For each epoch, iterates over batches, computes predictions, calculates mean squared error loss, backpropagates, and updates weights.
+# Returns the trained model and a list of loss values per epoch.
 def train_nn(X, y, input_size, epochs=100, batch=32):
+    """
+    Trains a simple feedforward neural network for regression tasks.
+    Args:
+        X (np.ndarray): Input features.
+        y (np.ndarray): Target values.
+        input_size (int): Number of input features.
+        epochs (int): Number of training epochs (default 100).
+        batch (int): Batch size (default 32).
+    Returns:
+        tuple: Trained model and list of losses.
+    """
     model = SimpleNN(input_size)
     X = torch.FloatTensor(X)
     y = torch.FloatTensor(y).reshape(-1,1)
@@ -220,6 +262,11 @@ def plot_learning_curve(model, X, y, fname='results/ml_learning_curve.png'):
     plt.close()
 
 def model_selection(X, y):
+    """
+    Compares different regression models using 5-fold cross-validation.
+    Evaluates a Random Forest and, if available, an XGBoost regressor.
+    Returns a dictionary of model names and their (negative) mean squared error scores.
+    """
     results = {}
     rf = RandomForestRegressor(n_estimators=100)
     rf_score = np.mean(cross_val_score(rf, X, y, cv=5, scoring='neg_mean_squared_error'))
@@ -251,7 +298,7 @@ class MothEyeSimulator:
         self.params = {
             'height': nm(300), 'period': nm(250), 'base_width': nm(200),
             'profile_type': 'parabolic',
-            'wavelength_points': 200, 'spatial_points': 50, 'angular_points': 20,
+            'wavelength_points': 100, 'spatial_points': 30, 'angular_points': 20,  # Reduced for speed
             'temperature': 298.15, 'rms_roughness': nm(5), 'interface_roughness': nm(2),
             'refractive_index': 1.5, 'extinction_coefficient': 0.001,
             'substrate_index': 3.5,  # Silicon
@@ -260,7 +307,7 @@ class MothEyeSimulator:
         self.wavelengths = np.linspace(nm(300), nm(1100), self.params['wavelength_points'])
         self.n_air = 1.0
         self.n_si = 3.5  # For simplicity, use constant or use Sellmeier for more accuracy
-        self.ml = EnhancedMothEyeML(input_size=9)
+        self.ml = EnhancedMothEyeML(input_size=9) # EnhancedMothEyeML is a class that implements a neural network with residual connections and attention.
         self.temperature_range = np.linspace(273.15, 373.15, 5)  # 0°C to 100°C
         ensure_dir('results')
         self.optimization_history = []
@@ -270,7 +317,7 @@ class MothEyeSimulator:
         self.material_air = Material('data/air.csv')
         # Load real solar spectrum
         self.solar_spectrum_func = load_solar_spectrum('data/am1.5g.csv')
-        self.scaler = StandardScaler()
+        self.scaler = StandardScaler() # Prepares a scaler for ML preprocessing.
         # Initialize report as None - will be created when needed
         self.report = None
 
@@ -319,6 +366,13 @@ class MothEyeSimulator:
 
     # --- Profile Functions ---
     def profile(self, z, profile_type):
+        """ Returns the fill fraction profile for the moth-eye structure as a function of normalized height z (0=base, 1=tip).
+                Supports several profile types:
+                Conical: Linear decrease.
+                Parabolic: Quadratic decrease.
+                Gaussian: Bell-shaped.
+                Quintic: Smooth, higher-order polynomial.
+            Uses np.clip to ensure values are between 0 and 1."""
         if profile_type == 'conical':
             return np.clip(1-z, 0, 1)
         elif profile_type == 'parabolic':
@@ -341,27 +395,30 @@ class MothEyeSimulator:
             n1, n2 = refractive indices of materials
             n_eff = effective refractive index
         """
-        z = np.linspace(0, 1, self.params['spatial_points']) # Creates array of 50 points between 0 and 1
-        f = self.profile(z, params['profile_type']) # Calculates fill fraction profile using the profile method
-
-        # Use wavelength-dependent n, k
-        n_si, k_si = self.material_si.get_nk(wavelength*1e9)
-        n_air, k_air = self.material_air.get_nk(wavelength*1e9)
-        
-        # Use Bruggeman's effective medium theory for more accurate results
-        n_eff = np.zeros_like(z, dtype=complex) # Initializes complex array for effective refractive indices
-        for i in range(len(z)):
-            # Solve quadratic equation for effective index
-            a = 1
-            b = (n_si**2 + n_air**2 - 2*f[i]*(n_si**2 - n_air**2))
-            c = n_si**2 * n_air**2
-            n_eff[i] = np.sqrt((-b + np.sqrt(b**2 - 4*a*c))/(2*a))
-        
+        z = np.linspace(0, 1, self.params['spatial_points']) # Normalized height
+        f = self.profile(z, params['profile_type']) # Fill fraction profile
+        n_si, k_si = self.material_si.get_nk(wavelength*1e9) # Silicon refractive index and extinction coefficient
+        n_air, k_air = self.material_air.get_nk(wavelength*1e9) # Air refractive index and extinction coefficient
+        # Use Bruggeman EMT for n_eff
+        n_eff = np.zeros_like(z, dtype=float) # Effective refractive index
+        from scipy.optimize import root_scalar # Root-finding for n_eff
+        for i in range(len(z)): # Iterates over each layer
+            def bruggeman_eq(n_eff2): # Bruggeman equation
+                return f[i]*(n_si**2-n_eff2)/(n_si**2+2*n_eff2) + (1-f[i])*(n_air**2-n_eff2)/(n_air**2+2*n_eff2)
+            guess = f[i]*n_si**2 + (1-f[i])*n_air**2 # Initial guess
+            bracket = [min(n_si**2, n_air**2)*0.5, max(n_si**2, n_air**2)*2] # Bracket for root-finding
+            sol = root_scalar(bruggeman_eq, bracket=bracket, method='bisect', maxiter=50) # Root-finding
+            if not sol.converged:
+                print(f"[WARNING] root_scalar did not converge for z={z[i]}, f={f[i]}, bracket={bracket}")
+            n_eff[i] = np.sqrt(sol.root) if sol.converged else np.sqrt(guess) # Effective refractive index
         return n_eff # Returns the effective refractive index profile
 
     # --- Transfer Matrix Method ---
     def transfer_matrix(self, n_eff, wavelength, theta_rad):
         """
+        n_eff: Array of effective refractive indices for each layer.
+        wavelength: Wavelength of light (in meters).
+        theta_rad: Incident angle in radians.
         Transfer Matrix Method (TMM) for multilayer thin films.
         Based on: Sun et al. (2008), Dong et al. (2015), and standard optics texts.
         Formula:
@@ -374,25 +431,24 @@ class MothEyeSimulator:
         Reflectance:
             R = |r|^2
         """
-        N = len(n_eff)
-        dz = self.params['height'] / N
-        M = np.eye(2, dtype=complex)
-        n0 = self.n_air
-        sin_theta_i = n0 * np.sin(theta_rad) # Snell's law: n₀sin(θ₀) = n₁sin(θ₁) = constant
+        N = len(n_eff) # Number of layers
+        dz = self.params['height'] / N # Layer thickness
+        M = np.eye(2, dtype=complex) # Initialize transfer matrix
+        sin_theta_i = self.n_air * np.sin(theta_rad) # Snell's law: n₀sin(θ₀) = n₁sin(θ₁) = constant
         theta_layers = np.arcsin(sin_theta_i / n_eff) # Calculates angle in each layer using Snell's law
         k0 = 2 * np.pi / wavelength # Wavevector in vacuum
         kz = k0 * n_eff * np.cos(theta_layers) # Wavevector in each layer
-        for i in range(N-1):
+        for i in range(N-1): # Iterates over each layer
             P = np.array([[np.exp(-1j*kz[i]*dz), 0],[0, np.exp(1j*kz[i]*dz)]]) # Propagation matrix for layer i
             r = (n_eff[i]*np.cos(theta_layers[i]) - n_eff[i+1]*np.cos(theta_layers[i+1])) / \
-                (n_eff[i]*np.cos(theta_layers[i]) + n_eff[i+1]*np.cos(theta_layers[i+1])) #Fresnel reflection coefficient at interface
+                (n_eff[i]*np.cos(theta_layers[i]) + n_eff[i+1]*np.cos(theta_layers[i+1])) # Fresnel reflection coefficient at interface
             t = 2*n_eff[i]*np.cos(theta_layers[i]) / \
                 (n_eff[i]*np.cos(theta_layers[i]) + n_eff[i+1]*np.cos(theta_layers[i+1])) # Fresnel transmission coefficient at interface
             I = (1/t)*np.array([[1, r],[r, 1]]) # Interface matrix
             M = M @ P @ I # Propagation matrix for layer i
         P_final = np.array([[np.exp(-1j*kz[-1]*dz), 0],[0, np.exp(1j*kz[-1]*dz)]]) # Propagation matrix for final layer
         M = M @ P_final # Applies final propagation
-        return M # Returns the complete transfer matrix
+        return M # Returns the total transfer matrix M, which can be used to compute reflection and transmission.
 
     def reflectance(self, params: dict, theta: float = 0, wavelength: np.ndarray = None, debug: bool = False) -> np.ndarray:
         """
@@ -424,44 +480,37 @@ class MothEyeSimulator:
             return np.ones_like(wavelength) * 0.5  # Return high reflectance for invalid params
         if not (0.3 <= params['base_width']/params['period'] <= 0.8):
             return np.ones_like(wavelength) * 0.5  # Return high reflectance for invalid params
-        for wl in wavelength:
-            z = np.linspace(0, 1, self.params['spatial_points'])
-            f = self.profile(z, params['profile_type'])
-            n1 = params['refractive_index']
-            n2 = self.n_air
-            n_eff = np.sqrt(f * n1**2 + (1-f) * n2**2)
-            N = len(n_eff)
-            dz = params['height'] / N
-            M = np.eye(2, dtype=complex)
-            n0 = self.n_air
-            sin_theta_i = n0 * np.sin(np.radians(theta))
-            theta_layers = np.arcsin(sin_theta_i / n_eff)
-            k0 = 2 * np.pi / wl
-            kz = k0 * n_eff * np.cos(theta_layers)
-            for i in range(N-1):
-                P = np.array([[np.exp(-1j*kz[i]*dz), 0],[0, np.exp(1j*kz[i]*dz)]])
-                r = (n_eff[i]*np.cos(theta_layers[i]) - n_eff[i+1]*np.cos(theta_layers[i+1])) / \
-                    (n_eff[i]*np.cos(theta_layers[i]) + n_eff[i+1]*np.cos(theta_layers[i+1]))
-                t = 2*n_eff[i]*np.cos(theta_layers[i]) / \
-                    (n_eff[i]*np.cos(theta_layers[i]) + n_eff[i+1]*np.cos(theta_layers[i+1]))
-                I = (1/t)*np.array([[1, r],[r, 1]])
-                M = M @ P @ I
-            P_final = np.array([[np.exp(-1j*kz[-1]*dz), 0],[0, np.exp(1j*kz[-1]*dz)]])
-            M = M @ P_final
-            r = M[1,0]/M[0,0]
-            Rval = np.abs(r)**2
-            # Apply physical effects with more realistic factors
-            rough = 1.0 - 0.1 * np.exp(-((4*np.pi*params['rms_roughness']/wl)**2)) # Surface roughness effect (Rayleigh criterion)
-            absorption = 1.0 - 0.05 * np.exp(-4*np.pi*params['extinction_coefficient']/wl) # Absorption effect
-            interface = 1.0 - 0.05 * np.exp(-((2*np.pi*params['interface_roughness']/wl)**2)) # Interface roughness effect
-            # Apply effects additively instead of multiplicatively
-            Rval = Rval * (1.0 - (1.0 - rough) - (1.0 - absorption) - (1.0 - interface))
-            # Add real-world offset and noise for realism
-            Rval = Rval + 0.0015 + np.random.normal(0, 0.0005)
-            Rval = np.clip(Rval, 0, 1.0) # Clips reflectance to 0-1 range
-
+        for wl in wavelength: # Iterates over each wavelength
+            z = np.linspace(0, 1, self.params['spatial_points']) # Creates array of 50 points between 0 and 1
+            f = self.profile(z, params['profile_type']) # Calculates fill fraction profile using the profile method
+            n1 = params['refractive_index'] # Refractive index of the material
+            n2 = self.n_air # Refractive index of air
+            # Use Bruggeman EMT for n_eff
+            n_eff = np.zeros_like(z, dtype=float)
+            for i in range(len(z)):
+                # Bruggeman equation: f*(n1^2-n_eff^2)/(n1^2+2*n_eff^2) + (1-f)*(n2^2-n_eff^2)/(n2^2+2*n_eff^2) = 0
+                def bruggeman_eq(n_eff2):
+                    return f[i]*(n1**2-n_eff2)/(n1**2+2*n_eff2) + (1-f[i])*(n2**2-n_eff2)/(n2**2+2*n_eff2)
+                # Initial guess: weighted average
+                guess = f[i]*n1**2 + (1-f[i])*n2**2
+                # Use a bracket that covers both n1^2 and n2^2
+                bracket = [min(n1**2, n2**2)*0.5, max(n1**2, n2**2)*2]
+                sol = root_scalar(bruggeman_eq, bracket=bracket, method='bisect', maxiter=50)
+                if not sol.converged:
+                    print(f"[WARNING] root_scalar did not converge for z={z[i]}, f={f[i]}, bracket={bracket}")
+                n_eff[i] = np.sqrt(sol.root) if sol.converged else np.sqrt(guess)
+            theta_rad = np.radians(theta) # Incident angle in radians
+            M = self.transfer_matrix(n_eff, wl, theta_rad) # Transfer matrix
+            r = M[1,0]/M[0,0] # Reflection coefficient
+            Rval = np.abs(r)**2 # Reflectance
+            rough = 1.0 - 0.1 * np.exp(-((4*np.pi*params['rms_roughness']/wl)**2)) # Roughness
+            absorption = 1.0 - 0.05 * np.exp(-4*np.pi*params['extinction_coefficient']/wl) # Absorption
+            interface = 1.0 - 0.05 * np.exp(-((2*np.pi*params['interface_roughness']/wl)**2)) # Interface roughness
+            Rval = Rval * (1.0 - (1.0 - rough) - (1.0 - absorption) - (1.0 - interface)) # Total reflectance
+            Rval = Rval + 0.0015 + np.random.normal(0, 0.0005) # Random noise
+            Rval = np.clip(Rval, 0, 1.0) # Clip to 0-1 range
             R.append(Rval)
-        return np.array(R) if len(R)>1 else R[0]
+        return np.array(R) if len(R)>1 else R[0] # Returns the reflectance
 
     def weighted_reflectance(self, params, debug=False):
         """
@@ -513,44 +562,15 @@ class MothEyeSimulator:
 
     def gradient_index_reflectance(self):
         """Calculate reflectance for gradient-index coating using transfer matrix method."""
-        # Create a gradient index profile
         n_layers = 50  # Number of layers for gradient
         n_air = self.n_air
         n_si = self.n_si
-        
-        # Create smooth gradient from air to Si
-        n_profile = np.linspace(n_air, n_si, n_layers)
-        
-        # Calculate transfer matrix
-        M = np.eye(2, dtype=complex)
-        dz = 100e-9 / n_layers  # Total thickness of 100nm
-        
-        for i in range(n_layers-1):
-            n1 = n_profile[i] # Refractive index of current layer
-            n2 = n_profile[i+1] # Refractive index of next layer
-            
-            # Propagation matrix
-            k0 = 2 * np.pi / (550e-9)  # Center wavelength
-            kz = k0 * n1 # Wavevector in current layer
-            P = np.array([[np.exp(-1j*kz*dz), 0], [0, np.exp(1j*kz*dz)]]) # Propagation matrix for current layer
-            
-            # Interface matrix
-            r = (n1 - n2)/(n1 + n2) # Fresnel reflection coefficient at interface
-            t = 2*n1/(n1 + n2) # Fresnel transmission coefficient at interface
-            I = (1/t)*np.array([[1, r], [r, 1]]) # Interface matrix
-            
-            M = M @ P @ I # Propagation matrix for current layer
-        
-        # Final propagation
-        kz = k0 * n_profile[-1] # Wavevector in final layer
-        P = np.array([[np.exp(-1j*kz*dz), 0], [0, np.exp(1j*kz*dz)]]) # Propagation matrix for final layer
-        M = M @ P # Applies final propagation
-        
-        # Calculate reflectance
-        r = M[1,0]/M[0,0]
-        R = np.abs(r)**2
-        
-        return R
+        n_profile = np.linspace(n_air, n_si, n_layers) 
+        theta_rad = 0.0  # Normal incidence
+        M = self.transfer_matrix(n_profile, 550e-9, theta_rad)
+        r = M[1,0]/M[0,0] # Reflection coefficient
+        R = np.abs(r)**2 # Reflectance
+        return R # Returns the reflectance
 
     # --- Manufacturing Feasibility ---
     def manufacturing_method(self, params):
@@ -659,7 +679,7 @@ class MothEyeSimulator:
         save_json(results, f'{fname_prefix}_results.json')
 
     def _validate_physical_constraints(self, params: Dict) -> bool:
-        """Validate physical constraints for the parameters."""
+        """Validates if a set of parameters is physically realistic and manufacturable."""
         try:
             # Aspect ratio constraints
             ar = params['height']/params['period']
@@ -765,7 +785,7 @@ class MothEyeSimulator:
         # Calculate total impact
         total_impact = np.prod(list(impact_factors.values()))
         
-        # Add total impact to the dictionary
+        # Multiplies all impacts to get a total impact factor.
         impact_factors['total'] = total_impact
         
         return impact_factors
@@ -778,7 +798,7 @@ class MothEyeSimulator:
         return base_R * humidity_factor
 
     def _calculate_uv_impact(self, params):
-        """Calculate UV degradation impact."""
+        """Models the effect of UV exposure over 25 years."""
         if not self.environmental_factors['uv_exposure']:
             return 1.0
         # UV degradation model
@@ -822,32 +842,34 @@ class MothEyeSimulator:
         }
 
     def calculate_lifetime_performance(self, params):
-        """Calculate expected lifetime performance."""
-        # Initial performance
-        initial_R = self.weighted_reflectance(params)
+        """Calculate expected lifetime performance, including baseline environmental impact and time-dependent degradation."""
+        # Initial performance (solar-weighted reflectance)
+        base_R = self.weighted_reflectance(params)
         
-        # Environmental impacts
-        env_impacts = self.calculate_environmental_impact(params)
+        # Baseline environmental impact (static, e.g., due to local climate)
+        env_factor = self.calculate_environmental_impact(params)['total']
+        R = base_R * env_factor  # This is your "starting" reflectance after baseline environmental effects
         
-        # Calculate degradation over 25 years
+        # Time-dependent degradation (aging, cumulative effects)
         years = 25
         monthly_R = []
         for year in range(years):
             for month in range(12):
-                # Calculate degradation factors
+                # Example: incremental degradation per month (can be improved with real data)
                 temp_factor = 1.0 + 0.001 * (year * 12 + month)  # Temperature cycling
                 uv_factor = 1.0 + 0.0001 * (year * 12 + month)   # UV exposure
                 dust_factor = 1.0 + 0.0005 * (year * 12 + month) # Dust accumulation
                 
-                # Calculate current reflectance
-                current_R = initial_R * temp_factor * uv_factor * dust_factor
+                # Apply cumulative degradation
+                current_R = R * temp_factor * uv_factor * dust_factor
                 monthly_R.append(current_R)
         
         return {
-            'initial_reflectance': initial_R,
+            'initial_reflectance': base_R,
+            'baseline_env_reflectance': R,
             'final_reflectance': monthly_R[-1],
             'average_reflectance': np.mean(monthly_R),
-            'degradation_rate': (monthly_R[-1] - initial_R) / years,
+            'degradation_rate': (monthly_R[-1] - R) / years,
             'lifetime_data': monthly_R
         }
 
@@ -870,6 +892,10 @@ class MothEyeSimulator:
             cost = manufacturing cost
             yield = manufacturing yield
             w1, w2, w3, w4 = weights
+
+        Purpose: Computes a single score for optimization, combining reflectance, angular performance, cost, and yield.
+        Logic: Lower score is better.
+        Weights can be adjusted for different priorities.
         """
         if weights is None:
             weights = {'reflectance': 0.4, 'angular': 0.3, 'cost': 0.15, 'yield': 0.15}
@@ -1507,34 +1533,39 @@ class MothEyeSimulator:
         plt.savefig(save_path)
         plt.close()
 
-    def advanced_optimize(self, profile_type='parabolic', method='differential_evolution'):
+    def de_objective(self, x, param_names, profile_type):
+        params = dict(zip(param_names, x))
+        params['profile_type'] = profile_type
+        if not self._validate_physical_constraints(params):
+            return 1e6  # Penalty for invalid parameters
+        return self.multi_objective_score(params)
+
+    def advanced_optimize(self, profile_type='parabolic', method='differential_evolution', maxiter=100, popsize=15):
         """Advanced optimization using multiple algorithms."""
         from scipy.optimize import differential_evolution, basinhopping, dual_annealing
-        
         bounds = self._get_profile_bounds(profile_type)
         param_names = list(bounds.keys())
-        
-        def objective(x):
-            params = dict(zip(param_names, x))
-            params['profile_type'] = profile_type
-            if not self._validate_physical_constraints(params):
-                return 1e6  # Penalty for invalid parameters
-            return self.multi_objective_score(params)
-        
         if method == 'differential_evolution':
-            result = differential_evolution(objective, [bounds[p] for p in param_names], 
-                                         maxiter=100, popsize=15, seed=42)
+            print("[DEBUG] Entering differential_evolution")
+            de_obj = functools.partial(self.de_objective, param_names=param_names, profile_type=profile_type)
+            result = differential_evolution(
+                de_obj,
+                [bounds[p] for p in param_names],
+                maxiter=maxiter,
+                popsize=popsize,
+                seed=42,
+                workers=-1  # Use all available CPU cores
+            )
+            print("[DEBUG] Exiting differential_evolution")
         elif method == 'basin_hopping':
-            result = basinhopping(objective, [np.mean(bounds[p]) for p in param_names], 
-                                niter=50, seed=42)
+            result = basinhopping(lambda x: self.de_objective(x, param_names, profile_type), [np.mean(bounds[p]) for p in param_names], 
+                                niter=maxiter, seed=42)
         elif method == 'dual_annealing':
-            result = dual_annealing(objective, [bounds[p] for p in param_names], 
-                                  maxiter=100, seed=42)
-        
+            result = dual_annealing(lambda x: self.de_objective(x, param_names, profile_type), [bounds[p] for p in param_names], 
+                                  maxiter=maxiter, seed=42)
         best_params = dict(zip(param_names, result.x))
         best_params['profile_type'] = profile_type
         best_R = self.weighted_reflectance(best_params)
-        
         return best_params, best_R, result.fun
 
     def adaptive_bounds(self, profile_type, optimization_history, convergence_threshold=0.01):
@@ -1618,26 +1649,43 @@ class MothEyeSimulator:
 
 # --- Main Workflow ---
 def main():
+    start_time = time.time()
+    print(f"\n[INFO] Starting main workflow at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     sim = MothEyeSimulator()
     
     # Configuration for different optimization strategies
+    if DEBUG_MODE:
+        debug_n_runs = 2
+        debug_n_iterations = 5
+        debug_ml_N = 20
+        debug_maxiter = 1  # Minimize for debug
+        debug_popsize = 1  # Minimize for debug
+    else:
+        debug_n_runs = 10
+        debug_n_iterations = 50
+        debug_ml_N = 1000
+        debug_maxiter = 50  # Reduced from 100 for faster execution
+        debug_popsize = 10  # Reduced from 15 for faster execution
+
     optimization_configs = {
         'conservative': {
             'method': 'multi_objective_optimize',
             'weights': {'reflectance': 0.5, 'angular': 0.3, 'cost': 0.1, 'yield': 0.1},
-            'n_runs': 5,
-            'n_iterations': 30
+            'n_runs': debug_n_runs,
+            'n_iterations': debug_n_iterations
         },
         'balanced': {
             'method': 'multi_objective_optimize', 
             'weights': {'reflectance': 0.4, 'angular': 0.3, 'cost': 0.15, 'yield': 0.15},
-            'n_runs': 10,
-            'n_iterations': 50
+            'n_runs': debug_n_runs,
+            'n_iterations': debug_n_iterations
         },
         'aggressive': {
             'method': 'advanced_optimize',
             'algorithm': 'differential_evolution',
-            'weights': {'reflectance': 0.6, 'angular': 0.2, 'cost': 0.1, 'yield': 0.1}
+            'weights': {'reflectance': 0.6, 'angular': 0.2, 'cost': 0.1, 'yield': 0.1},
+            'maxiter': debug_maxiter,
+            'popsize': debug_popsize
         }
     }
     
@@ -1646,14 +1694,14 @@ def main():
     results = {}
     
     for idx, profile in enumerate(['parabolic', 'conical', 'gaussian', 'quintic']):
-        print(f"\nOptimizing {profile} profile...")
+        print(f"\n[INFO] Optimizing {profile} profile at {time.strftime('%H:%M:%S')}")
         try:
             # Try different optimization strategies
             best_params = None
             best_R = float('inf')
             
             for config_name, config in optimization_configs.items():
-                print(f"  Trying {config_name} optimization...")
+                print(f"  [INFO] Trying {config_name} optimization at {time.strftime('%H:%M:%S')}")
                 
                 if config['method'] == 'multi_objective_optimize':
                     params, R = sim.multi_objective_optimize(
@@ -1664,7 +1712,9 @@ def main():
                 elif config['method'] == 'advanced_optimize':
                     params, R, _ = sim.advanced_optimize(
                         profile_type=profile,
-                        method=config['algorithm']
+                        method=config['algorithm'],
+                        maxiter=config.get('maxiter', 100),
+                        popsize=config.get('popsize', 15)
                     )
                 
                 if R < best_R:
@@ -1822,7 +1872,7 @@ def main():
     sim.plot_all(best_profile[1]['parameters'], fname_prefix='results/moth_eye')
     # Generate ML learning curve using RandomForestRegressor
     from sklearn.ensemble import RandomForestRegressor
-    X, y = sim.generate_ml_data(N=1000)
+    X, y = sim.generate_ml_data(N=debug_ml_N)
     plot_learning_curve(RandomForestRegressor(n_estimators=100), X, y, fname='results/ml_learning_curve.png')
     # Generate angular response for the best profile
     sim.plot_angular_response(best_profile[1]['parameters'], fname_prefix=f"results/{best_profile[0]}")
@@ -1830,6 +1880,7 @@ def main():
     sim.plot_profile_shapes()
     # Advanced ML workflow (NN training loss curve)
     sim.advanced_ml_workflow(X, y)
+    print(f"\n[INFO] Main workflow completed in {time.time() - start_time:.2f} seconds.")
 
 # --- Add new real-world parameters to comparison ---
 def get_cooling_factor(params):
