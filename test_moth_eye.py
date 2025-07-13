@@ -115,7 +115,7 @@ def test_reflectance() -> None:
         'results/moth_eye_comparison.png',
         'results/moth_eye_spectral.png',
         'results/moth_eye_angular.png',
-        'results/moth_eye_vs_traditional.png',
+        'results/nn_training_loss.png',
         'results/literature_comparison.png',
         'results/sensitivity_heatmap.png',
         'results/3d_reflectance_surface.png',

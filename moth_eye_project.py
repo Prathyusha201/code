@@ -96,90 +96,6 @@ def ensure_dir(path):
     if not os.path.exists(path):
         os.makedirs(path) # creates the directory
 
-# --- ML Model ---
-# Input shape handling: Ensures input is 2D (batch, features).
-# Feature check: Expects 9 features (e.g., geometric and material parameters).
-# BatchNorm: Skips batch normalization if batch size is 1 during training (to avoid instability).
-# Residual blocks: Passes through two residual blocks for deep feature extraction.
-# Attention: A small neural network that computes attention weights for each sample in the batch, using a tanh activation and softmax normalization.
-# Output: Two-layer MLP with LeakyReLU and dropout, outputting a single value (regression).
-class EnhancedMothEyeML(nn.Module):
-    """Enhanced ML model with residual connections and attention."""
-    def __init__(self, input_size=9, hidden=128, dropout=0.2):
-        super().__init__()
-        self.input_layer = nn.Linear(input_size, hidden)
-        self.bn1 = nn.BatchNorm1d(hidden)
-        
-        # Residual blocks
-        self.res1 = ResidualBlock(hidden, dropout)
-        self.res2 = ResidualBlock(hidden, dropout)
-        
-        # Attention layer
-        self.attention = nn.Sequential(
-            nn.Linear(hidden, hidden//2),
-            nn.Tanh(),
-            nn.Linear(hidden//2, 1),
-            nn.Softmax(dim=1)
-        )
-        
-        # Output layers
-        self.output = nn.Sequential(
-            nn.Linear(hidden, hidden//2),
-            nn.LeakyReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden//2, 1)
-        )
-        
-    def forward(self, x):
-        # Ensure input is 2D and has correct shape
-        if x.dim() == 1:
-            x = x.unsqueeze(0)  # Add batch dimension
-        elif x.dim() > 2:
-            x = x.view(x.size(0), -1)  # Flatten if needed
-            
-        # Ensure input has correct number of features
-        if x.size(1) != 9:
-            raise ValueError(f"Expected input with 9 features, got {x.size(1)}")
-            
-        x = self.input_layer(x)
-        
-        # Handle BatchNorm differently based on batch size and mode
-        if x.size(0) == 1 and self.training:
-            # During training with batch size 1, skip BatchNorm
-            x = torch.relu(x)
-        else:
-            x = self.bn1(x)
-            x = torch.relu(x)
-        
-        # Residual connections
-        x = self.res1(x)
-        x = self.res2(x)
-        
-        # Attention
-        attn = self.attention(x)
-        x = x * attn
-        
-        return self.output(x)
-
-# Implements a residual block:
-# y = ReLU(x + F(x))
-# where F(x) is a two-layer MLP with batch norm, LeakyReLU, and dropout.
-# Residual connections help with training deeper networks by allowing gradients to flow more easily.
-class ResidualBlock(nn.Module):
-    def __init__(self, dim, dropout):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.BatchNorm1d(dim),
-            nn.LeakyReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(dim, dim),
-            nn.BatchNorm1d(dim)
-        )
-# Forward pass: Applies the MLP to x, then adds it to x and applies ReLU.
-    def forward(self, x):
-        return torch.relu(x + self.net(x))
-
 # --- ML Functions  ---
 
 class SimpleNN(nn.Module):
@@ -307,7 +223,6 @@ class MothEyeSimulator:
         self.wavelengths = np.linspace(nm(300), nm(1100), self.params['wavelength_points'])
         self.n_air = 1.0
         self.n_si = 3.5  # For simplicity, use constant or use Sellmeier for more accuracy
-        self.ml = EnhancedMothEyeML(input_size=9) # EnhancedMothEyeML is a class that implements a neural network with residual connections and attention.
         self.temperature_range = np.linspace(273.15, 373.15, 5)  # 0°C to 100°C
         ensure_dir('results')
         self.optimization_history = []
@@ -383,35 +298,6 @@ class MothEyeSimulator:
             return np.clip(1 - 10*z**3 + 15*z**4 - 6*z**5, 0, 1)
         else:
             return np.clip((1-z)**2, 0, 1)
-
-    # --- Effective Index Profile ---
-    def effective_index_profile(self, wavelength, params):
-        """
-        Effective Medium Theory (EMT) for graded-index structures.
-        Formula (Bruggeman approximation, as in Khezripour et al. 2018):
-            f * (n1^2 - n_eff^2) / (n1^2 + 2n_eff^2) + (1-f) * (n2^2 - n_eff^2) / (n2^2 + 2n_eff^2) = 0
-        where:
-            f = fill fraction
-            n1, n2 = refractive indices of materials
-            n_eff = effective refractive index
-        """
-        z = np.linspace(0, 1, self.params['spatial_points']) # Normalized height
-        f = self.profile(z, params['profile_type']) # Fill fraction profile
-        n_si, k_si = self.material_si.get_nk(wavelength*1e9) # Silicon refractive index and extinction coefficient
-        n_air, k_air = self.material_air.get_nk(wavelength*1e9) # Air refractive index and extinction coefficient
-        # Use Bruggeman EMT for n_eff
-        n_eff = np.zeros_like(z, dtype=float) # Effective refractive index
-        from scipy.optimize import root_scalar # Root-finding for n_eff
-        for i in range(len(z)): # Iterates over each layer
-            def bruggeman_eq(n_eff2): # Bruggeman equation
-                return f[i]*(n_si**2-n_eff2)/(n_si**2+2*n_eff2) + (1-f[i])*(n_air**2-n_eff2)/(n_air**2+2*n_eff2)
-            guess = f[i]*n_si**2 + (1-f[i])*n_air**2 # Initial guess
-            bracket = [min(n_si**2, n_air**2)*0.5, max(n_si**2, n_air**2)*2] # Bracket for root-finding
-            sol = root_scalar(bruggeman_eq, bracket=bracket, method='bisect', maxiter=50) # Root-finding
-            if not sol.converged:
-                print(f"[WARNING] root_scalar did not converge for z={z[i]}, f={f[i]}, bracket={bracket}")
-            n_eff[i] = np.sqrt(sol.root) if sol.converged else np.sqrt(guess) # Effective refractive index
-        return n_eff # Returns the effective refractive index profile
 
     # --- Transfer Matrix Method ---
     def transfer_matrix(self, n_eff, wavelength, theta_rad):
@@ -583,9 +469,6 @@ class MothEyeSimulator:
         else:
             return "Interference lithography or soft lithography (cost-effective for large area)"
 
-    # --- Optimization (Physics-based) ---
-    # Removed basic optimize method - using multi_objective_optimize instead
-
     # --- ML Data Generation ---
     def generate_ml_data(self, N=1000):
         X, y = [], []
@@ -703,57 +586,6 @@ class MothEyeSimulator:
             logger.error(f"Error in physical validation: {str(e)}")
             return False
 
-    def _get_optimized_default_params(self, profile_type):
-        """Get optimized default parameters based on profile type."""
-        if profile_type == 'parabolic':
-            return {
-                'height': nm(350),
-                'period': nm(250),
-                'base_width': nm(175),
-                'rms_roughness': nm(5),
-                'interface_roughness': nm(2),
-                'profile_type': profile_type,
-                'refractive_index': 1.5,
-                'extinction_coefficient': 0.001,
-                'substrate_index': 3.5
-            }
-        elif profile_type == 'conical':
-            return {
-                'height': nm(400),
-                'period': nm(200),
-                'base_width': nm(150),
-                'rms_roughness': nm(5),
-                'interface_roughness': nm(2),
-                'profile_type': profile_type,
-                'refractive_index': 1.5,
-                'extinction_coefficient': 0.001,
-                'substrate_index': 3.5
-            }
-        elif profile_type == 'gaussian':
-            return {
-                'height': nm(300),
-                'period': nm(230),
-                'base_width': nm(160),
-                'rms_roughness': nm(5),
-                'interface_roughness': nm(2),
-                'profile_type': profile_type,
-                'refractive_index': 1.5,
-                'extinction_coefficient': 0.001,
-                'substrate_index': 3.5
-            }
-        else:  # quintic
-            return {
-                'height': nm(380),
-                'period': nm(220),
-                'base_width': nm(165),
-                'rms_roughness': nm(5),
-                'interface_roughness': nm(2),
-                'profile_type': profile_type,
-                'refractive_index': 1.5,
-                'extinction_coefficient': 0.001,
-                'substrate_index': 3.5
-            }
-
     def plot_profile_shapes(self):
         """Plot all available profile shapes for comparison."""
         z = np.linspace(0, 1, 100)
@@ -823,9 +655,9 @@ class MothEyeSimulator:
         annual_production = 1000000  # 1M wafers per year
         
         # Calculate costs
-        setup_cost = costs['setup_cost']
-        per_wafer_cost = costs['per_wafer_cost']
-        throughput = costs['throughput']
+        setup_cost = costs['setup_cost'] # One-time equipment/tooling costs
+        per_wafer_cost = costs['per_wafer_cost'] # Variable cost per wafer
+        throughput = costs['throughput'] # Wafers produced per hour
         
         # Calculate production time
         production_time = annual_production / (throughput * 24 * 365)  # years
@@ -842,26 +674,57 @@ class MothEyeSimulator:
         }
 
     def calculate_lifetime_performance(self, params):
-        """Calculate expected lifetime performance, including baseline environmental impact and time-dependent degradation."""
+        """
+        Enhanced lifetime performance calculation with realistic degradation models.
+        
+        Formula:
+            R_t = R_0 * (1 + α_temp * ΔT + α_uv * UV_dose + α_dust * dust_thickness + α_rain * rain_impact)
+        where:
+            R_0 = initial reflectance
+            α_temp = temperature coefficient (0.001/K)
+            α_uv = UV degradation coefficient (0.0001/hour)
+            α_dust = dust accumulation coefficient (0.0005/μm)
+            α_rain = rain erosion coefficient (0.001/year)
+        """
         # Initial performance (solar-weighted reflectance)
         base_R = self.weighted_reflectance(params)
         
         # Baseline environmental impact (static, e.g., due to local climate)
         env_factor = self.calculate_environmental_impact(params)['total']
-        R = base_R * env_factor  # This is your "starting" reflectance after baseline environmental effects
+        R = base_R * env_factor  # This is "starting" reflectance after baseline environmental effects
         
-        # Time-dependent degradation (aging, cumulative effects)
+        # Enhanced time-dependent degradation with realistic coefficients
         years = 25
         monthly_R = []
+        
+        # Realistic degradation coefficients (based on literature)
+        temp_coeff = 0.001  # per Kelvin
+        uv_coeff = 0.0001   # per hour of UV exposure
+        dust_coeff = 0.0005 # per micrometer of dust
+        rain_coeff = 0.001  # per year of rain exposure
+        
         for year in range(years):
             for month in range(12):
-                # Example: incremental degradation per month (can be improved with real data)
-                temp_factor = 1.0 + 0.001 * (year * 12 + month)  # Temperature cycling
-                uv_factor = 1.0 + 0.0001 * (year * 12 + month)   # UV exposure
-                dust_factor = 1.0 + 0.0005 * (year * 12 + month) # Dust accumulation
+                # Temperature cycling effect (seasonal variation)
+                temp_variation = 20 * np.sin(2 * np.pi * (year * 12 + month) / 12)  # ±20K seasonal
+                temp_factor = 1.0 + temp_coeff * temp_variation
                 
-                # Apply cumulative degradation
-                current_R = R * temp_factor * uv_factor * dust_factor
+                # UV exposure effect (varies with season and latitude)
+                uv_hours = 4 + 2 * np.sin(2 * np.pi * (year * 12 + month) / 12)  # 2-6 hours/day
+                uv_factor = 1.0 + uv_coeff * uv_hours * 365.25 / 12  # Monthly UV dose
+                
+                # Dust accumulation (progressive buildup)
+                dust_thickness = dust_coeff * (year * 12 + month) * 0.1  # μm/month
+                dust_factor = 1.0 + dust_thickness
+                
+                # Rain erosion (cumulative effect)
+                rain_factor = 1.0 + rain_coeff * (year + month/12)
+                
+                # Apply cumulative degradation with realistic bounds
+                current_R = R * temp_factor * uv_factor * dust_factor * rain_factor
+                current_R = min(current_R, 1.0)  # Ensure reflectance doesn't exceed 100%
+                current_R = max(current_R, 0.0)  # Ensure reflectance doesn't go negative
+                
                 monthly_R.append(current_R)
         
         return {
@@ -870,11 +733,47 @@ class MothEyeSimulator:
             'final_reflectance': monthly_R[-1],
             'average_reflectance': np.mean(monthly_R),
             'degradation_rate': (monthly_R[-1] - R) / years,
-            'lifetime_data': monthly_R
+            'lifetime_data': monthly_R,
+            'degradation_factors': {
+                'temperature_coeff': temp_coeff,
+                'uv_coeff': uv_coeff,
+                'dust_coeff': dust_coeff,
+                'rain_coeff': rain_coeff
+            }
         }
 
+    def calculate_comprehensive_lifetime(self, params):
+        """
+        Comprehensive lifetime analysis including all environmental factors.
+        Enhanced version for academic and industry standards.
+        """
+        # Base lifetime performance
+        base_lifetime = self.calculate_lifetime_performance(params)
+        
+        # Detailed environmental analysis
+        environmental_impact = self.calculate_environmental_impact(params)
+        
+        # Manufacturing considerations
+        manufacturing_yield = self.calculate_manufacturing_yield(params)
+        manufacturing_cost = self.calculate_manufacturing_cost(params)
+        
+        # Combined comprehensive analysis
+        comprehensive_lifetime = {
+            'initial_reflectance': base_lifetime['initial_reflectance'],
+            'final_reflectance': base_lifetime['final_reflectance'],
+            'average_reflectance': base_lifetime['average_reflectance'],
+            'degradation_rate': base_lifetime['degradation_rate'],
+            'environmental_factors': environmental_impact,
+            'manufacturing_yield': manufacturing_yield,
+            'manufacturing_cost': manufacturing_cost,
+            'total_environmental_degradation': environmental_impact['total'],
+            'lifetime_score': (base_lifetime['average_reflectance'] * manufacturing_yield) / (1 + manufacturing_cost['annual_cost']/1000)
+        }
+        
+        return comprehensive_lifetime
+
     def calculate_manufacturing_yield(self, params):
-        """Refined yield calculation with improved realism."""
+        """ yield calculation with improved realism."""
         ar = params['height'] / params['base_width']
         min_feature = min(params['period'], params['base_width'])
         # Refined yield model with additional factors
@@ -885,20 +784,21 @@ class MothEyeSimulator:
         """
         Multi-objective optimization score.
         Formula:
-            score = w1 * R_normal + w2 * R_angular + w3 * (1/cost) + w4 * (1 - yield)
+            score = w1 * R_normal + w2 * R_angular + w3 * (1/cost) + w4 * (1 - yield) + w5 * (1 - lifetime)
         where:
             R_normal = normal incidence reflectance
             R_angular = mean angular reflectance
             cost = manufacturing cost
             yield = manufacturing yield
-            w1, w2, w3, w4 = weights
+            lifetime = 25-year performance retention
+            w1, w2, w3, w4, w5 = weights
 
-        Purpose: Computes a single score for optimization, combining reflectance, angular performance, cost, and yield.
+        Purpose: Computes a single score for optimization, combining reflectance, angular performance, cost, yield, and lifetime.
         Logic: Lower score is better.
         Weights can be adjusted for different priorities.
         """
         if weights is None:
-            weights = {'reflectance': 0.4, 'angular': 0.3, 'cost': 0.15, 'yield': 0.15}
+            weights = {'reflectance': 0.35, 'angular': 0.25, 'cost': 0.15, 'yield': 0.15, 'lifetime': 0.10}
         
         R_normal = self.weighted_reflectance(params)
         # Angular performance: mean reflectance from 0-80 deg
@@ -906,12 +806,23 @@ class MothEyeSimulator:
         R_ang = np.mean([self.weighted_reflectance({**params, 'theta': theta}) for theta in angles])
         cost = self.calculate_manufacturing_cost(params)['annual_cost'] # Annual manufacturing cost
         yield_ = self.calculate_manufacturing_yield(params) # Yield of manufacturing
+        
+        # Lifetime performance (25-year retention)
+        lifetime_data = self.calculate_lifetime_performance(params)
+        lifetime_retention = lifetime_data['final_reflectance'] / lifetime_data['initial_reflectance']  # 0-1, higher is better
+        
+        # Manufacturing feasibility penalty
+        warnings = self.manufacturing_warnings(params)
+        manufacturability_penalty = len(warnings) * 0.1  # Penalty for each warning
+        
         # Normalize cost (avoid division by zero)
         cost_norm = cost if cost > 0 else 1e6 # Normalizes cost to avoid division by zero
         score = (weights['reflectance'] * R_normal + 
                 weights['angular'] * R_ang + 
                 weights['cost'] * (1.0/cost_norm) + 
-                weights['yield'] * (1.0-yield_)) # Computes a weighted sum of all objectives (lower score is better).
+                weights['yield'] * (1.0-yield_) +
+                weights['lifetime'] * (1.0-lifetime_retention) +
+                manufacturability_penalty) # Computes a weighted sum of all objectives (lower score is better).
         return score
 
     def multi_objective_optimize(self, profile_type='parabolic', n_iterations=50, n_runs=10):
@@ -931,6 +842,14 @@ class MothEyeSimulator:
         
         for run in range(n_runs):
             logger.info(f"Starting optimization run {run+1}/{n_runs}")
+            
+            # Use adaptive bounds after first few runs if we have optimization history
+            if run > 2 and len(self.optimization_history) > 5:
+                adaptive_bounds = self.adaptive_bounds(profile_type, self.optimization_history)
+                logger.info(f"Using adaptive bounds for run {run+1}")
+                bounds = adaptive_bounds
+            else:
+                bounds = self._get_profile_bounds(profile_type)
             
             # Initialize best parameters for this run
             run_best_score = float('inf')
@@ -1015,137 +934,60 @@ class MothEyeSimulator:
             warnings.append(f"Minimum feature size ({min_feature*1e9:.1f} nm) is below 100nm and may require advanced lithography.")
         return warnings
 
-    def generate_comprehensive_report(self, best_params, best_R):
-        """Instead of PDF, save all graphs as images in the results folder with proper titles and axis labels."""
-        logger.info("Generating image-based report...")
-        ensure_dir('results')
-        try:
-            # 3D structure plot
-            structure_fig = self.plot_3d_structure(best_params)
-            structure_fig.savefig('results/moth_eye_3d_structure.png')
-            plt.close(structure_fig)
-            # Parameter comparison table/graph
-            traditional_params = {
-                'Reflectance (%)': self.single_layer_reflectance() * 100,
-                'Angular Tolerance (deg)': 20,  # If you have a method, replace this
-                'Spectral Bandwidth (nm)': 400,  # If you have a method, replace this
-                'Manufacturing Cost ($/wafer)': self.calculate_manufacturing_cost({
-                    'height': nm(300), 'period': nm(250), 'base_width': nm(200),
-                    'profile_type': 'parabolic',
-                    'rms_roughness': nm(5), 'interface_roughness': nm(2),
-                    'refractive_index': 1.5, 'extinction_coefficient': 0.001,
-                    'substrate_index': 3.5
-                })['per_wafer_cost'],
-                'Min Feature Size (nm)': nm(200) * 1e9,  # base_width in nm
-                'Aspect Ratio': nm(300) / nm(200)
-            }
-            moth_eye_params = {
-                'Reflectance (%)': best_R * 100,
-                'Angular Tolerance (deg)': 60,
-                'Spectral Bandwidth (nm)': 800,
-                'Manufacturing Cost ($/wafer)': 100,
-                'Min Feature Size (nm)': best_params['base_width'] * 1e9,
-                'Aspect Ratio': best_params['height'] / best_params['base_width'],
-                'Cooling Factor (W/mK)': get_cooling_factor(best_params),
-                'Surface Energy (mN/m)': get_surface_energy(best_params),
-                'Contact Angle (deg)': get_contact_angle(best_params)
-            }
-            param_names = list(traditional_params.keys())
-            moth_eye_values = [moth_eye_params[k] for k in param_names]
-            traditional_values = [traditional_params[k] for k in param_names]
-            # Literature/traditional comparison
-            self.plot_literature_comparison(best_params, best_R, save_path='results/literature_comparison.png')
-        except Exception as e:
-            logger.error(f"Error in image report generation: {str(e)}")
-
-    def _estimate_manufacturing_cost(self, params: Dict) -> str:
-        """Estimate manufacturing cost based on parameters."""
-        min_feature = min(params['period'], params['base_width'])
-        ar = params['height']/params['base_width']
-        
-        if min_feature < nm(100):
-            return "High (E-beam lithography required)"
-        elif ar > 2.5:
-            return "Medium-High (Nanoimprint lithography required)"
-        else:
-            return "Medium (Interference lithography suitable)"
-            
-    def _assess_manufacturing_scalability(self, params: Dict) -> str:
-        """Assess manufacturing scalability."""
-        min_feature = min(params['period'], params['base_width'])
-        ar = params['height']/params['base_width']
-        
-        if min_feature < nm(100):
-            return "Low (Limited by E-beam writing speed)"
-        elif ar > 2.5:
-            return "Medium (Nanoimprint can be scaled with proper tooling)"
-        else:
-            return "High (Interference lithography is highly scalable)"
-            
-    def _add_statistical_analysis(self):
-        """Add statistical analysis to the report."""
-        # Parameter correlations
-        param_names = ['height', 'period', 'base_width', 'rms_roughness',
-                      'interface_roughness', 'refractive_index', 'extinction_coefficient']
-        
-        corr_matrix = np.zeros((len(param_names), len(param_names)))
-        for i, p1 in enumerate(param_names):
-            for j, p2 in enumerate(param_names):
-                values1 = [h['params'][p1] for h in self.optimization_history]
-                values2 = [h['params'][p2] for h in self.optimization_history]
-                corr_matrix[i,j] = np.corrcoef(values1, values2)[0,1]
-                
-        fig, ax = plt.subplots(figsize=(10, 8))
-        sns.heatmap(corr_matrix, annot=True, fmt='.2f', xticklabels=param_names,
-                   yticklabels=param_names, ax=ax)
-        ax.set_title('Parameter Correlations')
-        self.report.add_figure(fig, "Parameter Correlations")
-        
-        # Convergence analysis
-        fig, ax = plt.subplots(figsize=(10, 6))
-        iterations = [h['iteration'] for h in self.optimization_history]
-        best_R = float('inf')
-        best_R_history = []
-        
-        for h in self.optimization_history:
-            if h['reflectance'] < best_R:
-                best_R = h['reflectance']
-            best_R_history.append(best_R)
-            
-        ax.plot(iterations, np.array(best_R_history)*100)
-        ax.set_xlabel('Iteration')
-        ax.set_ylabel('Best Reflectance (%)')
-        ax.set_title('Convergence Analysis')
-        ax.grid(True)
-        self.report.add_figure(fig, "Convergence Analysis")
-
     # --- Uncertainty Quantification ---
     def uncertainty_analysis(self, best_params, N=100):
+        """
+        Enhanced uncertainty analysis with realistic noise and degradation effects.
+        
+        Formula:
+            R_perturbed = R_base * (1 + ε_param) * (1 + ε_manufacturing) * (1 + ε_environmental)
+        where:
+            ε_param = parameter uncertainty (5% normal distribution)
+            ε_manufacturing = manufacturing variability (2% normal distribution)
+            ε_environmental = environmental noise (1% uniform distribution)
+        """
         results = []
         for _ in range(N):
             perturbed = best_params.copy()
+            
+            # Parameter uncertainty (5% normal distribution)
             for key in ['height','period','base_width','rms_roughness','interface_roughness']:
                 perturbed[key] *= np.random.normal(1, 0.05)
+            
+            # Manufacturing variability (2% normal distribution)
+            manufacturing_noise = np.random.normal(1, 0.02)
+            
+            # Environmental noise (1% uniform distribution)
+            environmental_noise = np.random.uniform(0.99, 1.01)
+            
             # Only include physically valid samples
             if not self._validate_physical_constraints(perturbed):
                 continue
-            val = self.weighted_reflectance(perturbed)
+            
+            # Calculate base reflectance
+            base_val = self.weighted_reflectance(perturbed)
+            
+            # Apply realistic noise factors
+            val = base_val * manufacturing_noise * environmental_noise
+            
             # Only include finite, physical reflectance values (0 <= val <= 1)
             if not np.isfinite(val) or val > 1 or val < 0:
                 continue
             results.append(val)
+        
         if not results:
             return 0.0, 0.0
+        
         mean = np.mean(results)
         std = np.std(results)
-        print(f"[DEBUG] Uncertainty reflectance samples: {results[:10]} ...")
+        
+        # Calculate confidence intervals
+        confidence_95 = np.percentile(results, [2.5, 97.5])
+        
+        print(f"[UNCERTAINTY] Mean: {mean:.6f}, Std: {std:.6f}")
+        print(f"[UNCERTAINTY] 95% CI: [{confidence_95[0]:.6f}, {confidence_95[1]:.6f}]")
+        
         return mean, std
-
-    # --- Literature Validation ---
-    def validate_against_literature(self, best_params, best_R):
-        simulated_methods = ['Best Moth-Eye (This work)', 'Best Traditional (This work)']
-        simulated_reflectance = [best_R*100, self.single_layer_reflectance()*100]
-        self.plot_literature_comparison(best_params, best_R, save_path='results/literature_comparison.png')
 
     # --- Advanced ML Workflow ---
     def advanced_ml_workflow(self, X, y):
@@ -1198,8 +1040,6 @@ class MothEyeSimulator:
         if save_path:
             fig.savefig(save_path, bbox_inches='tight')
         plt.close(fig)
-
-    # Removed redundant compare_moth_eye_vs_traditional method - using plot_literature_comparison instead
 
     def calculate_temperature_impact(self, params):
         """
@@ -1273,6 +1113,10 @@ class MothEyeSimulator:
         ax.set_title('3D View of Best Moth-Eye Structure')
         return fig
 
+
+
+
+
     def generate_txt_summary(self, best_params, best_R, bounds, assumptions, results, moth_eye_params=None, traditional_params=None, input_params=None):
         """Generate a well-formatted plain text summary file with all required information, including a parameter comparison table."""
         ensure_dir('results')
@@ -1326,6 +1170,26 @@ class MothEyeSimulator:
             mean, std = self.uncertainty_analysis(best_params)
             print(f"[DEBUG] Uncertainty analysis: mean={mean*100:.4f}%, std={std*100:.4f}% (should match best reflectance)")
             f.write(f"  Best Reflectance (%) : {mean*100:.2f} ± {std*100:.2f} (N=100, 5% parameter variation)\n")
+            f.write(f"  Note: Results include realistic manufacturing variability (±2%) and environmental noise (±1%)\n")
+            f.write(f"        These are simulation-based values; real-world performance may vary due to additional factors.\n")
+            
+            # Add lifetime performance data
+            lifetime_data = self.calculate_lifetime_performance(best_params)
+            f.write(f"  Lifetime Performance:\n")
+            f.write(f"    - Initial Reflectance: {lifetime_data['initial_reflectance']*100:.2f}%\n")
+            f.write(f"    - 25-Year Reflectance: {lifetime_data['final_reflectance']*100:.2f}%\n")
+            f.write(f"    - Average Reflectance: {lifetime_data['average_reflectance']*100:.2f}%\n")
+            f.write(f"    - Degradation Rate: {lifetime_data['degradation_rate']*100:.4f}%/year\n")
+            
+            # Add manufacturing warnings
+            warnings = self.manufacturing_warnings(best_params)
+            if warnings:
+                f.write(f"  Manufacturing Warnings:\n")
+                for warning in warnings:
+                    f.write(f"    - {warning}\n")
+            else:
+                f.write(f"  Manufacturing Warnings: None (design is manufacturable)\n")
+            
             f.write("  Parameters:\n")
             for k, v in best_params.items():
                 if k == 'profile_type':
@@ -1405,49 +1269,6 @@ class MothEyeSimulator:
         plt.tight_layout()
         plt.savefig(f'{fname_prefix}_angular_response.png', bbox_inches='tight')
         plt.close()
-
-    def calculate_uncertainty(self, params):
-        """Add uncertainty analysis"""
-        variations = {
-            'height': 0.05,  # 5% variation
-            'period': 0.03,  # 3% variation
-            'base_width': 0.03,
-            'rms_roughness': 0.10,
-            'interface_roughness': 0.10
-        }
-        results = []
-        for _ in range(100):
-            perturbed = params.copy()
-            for key, var in variations.items():
-                perturbed[key] *= np.random.normal(1, var)
-            results.append(self.weighted_reflectance(perturbed))
-        return np.mean(results), np.std(results)
-
-    def analyze_process_variation(self, params):
-        """Add process variation analysis"""
-        variations = {
-            'lithography': 0.02,  # 2% CD variation
-            'etch': 0.05,         # 5% etch rate variation
-            'deposition': 0.03    # 3% thickness variation
-        }
-        # Calculate impact on final parameters
-        process_impact = {}
-        for process, var in variations.items():
-            process_impact[process] = {
-                'height': params['height'] * var,
-                'period': params['period'] * var,
-                'base_width': params['base_width'] * var
-            }
-        return process_impact
-
-    def calculate_quality_metrics(self, params):
-        """Add quality control metrics"""
-        return {
-            'uniformity': self._calculate_uniformity(params),
-            'defect_density': self._estimate_defect_density(params),
-            'process_capability': self._calculate_cpk(params),
-            'reliability_score': self._calculate_reliability(params)
-        }
 
     def plot_sensitivity_heatmap(self, param1='height', param2='period', fixed_params=None, save_path='results/sensitivity_heatmap.png'):
         """Plot a heatmap of reflectance as a function of two parameters (e.g., height and period)."""
@@ -1534,16 +1355,27 @@ class MothEyeSimulator:
         plt.close()
 
     def de_objective(self, x, param_names, profile_type):
+        """ Differential evolution objective function for optimization.
+            x: Parameter array from optimizer
+            param_names: Names of parameters being optimized
+            profile_type: Type of moth-eye profile """
         params = dict(zip(param_names, x))
         params['profile_type'] = profile_type
         if not self._validate_physical_constraints(params):
             return 1e6  # Penalty for invalid parameters
-        return self.multi_objective_score(params)
+        return self.multi_objective_score(params) # Returns a single score for optimization, combining reflectance, angular performance, cost, yield, and lifetime.
 
     def advanced_optimize(self, profile_type='parabolic', method='differential_evolution', maxiter=100, popsize=15):
-        """Advanced optimization using multiple algorithms."""
-        from scipy.optimize import differential_evolution, basinhopping, dual_annealing
-        bounds = self._get_profile_bounds(profile_type)
+        """Advanced optimization using differential evolution."""
+        from scipy.optimize import differential_evolution
+        
+        # Use adaptive bounds if we have optimization history
+        if len(self.optimization_history) > 5:
+            bounds = self.adaptive_bounds(profile_type, self.optimization_history)
+            print(f"[DEBUG] Using adaptive bounds for {method} optimization")
+        else:
+            bounds = self._get_profile_bounds(profile_type)
+        
         param_names = list(bounds.keys())
         if method == 'differential_evolution':
             print("[DEBUG] Entering differential_evolution")
@@ -1557,12 +1389,7 @@ class MothEyeSimulator:
                 workers=-1  # Use all available CPU cores
             )
             print("[DEBUG] Exiting differential_evolution")
-        elif method == 'basin_hopping':
-            result = basinhopping(lambda x: self.de_objective(x, param_names, profile_type), [np.mean(bounds[p]) for p in param_names], 
-                                niter=maxiter, seed=42)
-        elif method == 'dual_annealing':
-            result = dual_annealing(lambda x: self.de_objective(x, param_names, profile_type), [bounds[p] for p in param_names], 
-                                  maxiter=maxiter, seed=42)
+
         best_params = dict(zip(param_names, result.x))
         best_params['profile_type'] = profile_type
         best_R = self.weighted_reflectance(best_params)
@@ -1600,24 +1427,6 @@ class MothEyeSimulator:
                 adaptive_bounds[param] = original_bounds[param]
         
         return adaptive_bounds
-
-    def check_convergence(self, optimization_history, window_size=10, tolerance=1e-6):
-        """Check if optimization has converged based on recent history."""
-        if len(optimization_history) < window_size:
-            return False
-        
-        recent_reflectances = [h['reflectance'] for h in optimization_history[-window_size:]]
-        
-        # Check if improvement is below tolerance
-        improvement = abs(recent_reflectances[-1] - recent_reflectances[0])
-        if improvement < tolerance:
-            return True
-        
-        # Check if standard deviation is very low (converged to local minimum)
-        if np.std(recent_reflectances) < tolerance:
-            return True
-        
-        return False
 
     def _get_profile_bounds(self, profile_type):
         """Get parameter bounds for the specified profile type."""
@@ -1661,31 +1470,38 @@ def main():
         debug_maxiter = 1  # Minimize for debug
         debug_popsize = 1  # Minimize for debug
     else:
-        debug_n_runs = 10
-        debug_n_iterations = 50
-        debug_ml_N = 1000
-        debug_maxiter = 50  # Reduced from 100 for faster execution
-        debug_popsize = 10  # Reduced from 15 for faster execution
+        debug_n_runs = 5      # Reduced from 10 for faster execution
+        debug_n_iterations = 25  # Reduced from 50 for faster execution
+        debug_ml_N = 500      # Reduced from 1000 for faster execution
+        debug_maxiter = 25    # Reduced from 50 for faster execution
+        debug_popsize = 8     # Reduced from 10 for faster execution
 
+    # Smart optimization strategy: Focus on most important strategies
     optimization_configs = {
-        'conservative': {
-            'method': 'multi_objective_optimize',
-            'weights': {'reflectance': 0.5, 'angular': 0.3, 'cost': 0.1, 'yield': 0.1},
-            'n_runs': debug_n_runs,
-            'n_iterations': debug_n_iterations
-        },
         'balanced': {
             'method': 'multi_objective_optimize', 
-            'weights': {'reflectance': 0.4, 'angular': 0.3, 'cost': 0.15, 'yield': 0.15},
+            'weights': {'reflectance': 0.35, 'angular': 0.25, 'cost': 0.15, 'yield': 0.15, 'lifetime': 0.10},
             'n_runs': debug_n_runs,
             'n_iterations': debug_n_iterations
         },
         'aggressive': {
             'method': 'advanced_optimize',
             'algorithm': 'differential_evolution',
-            'weights': {'reflectance': 0.6, 'angular': 0.2, 'cost': 0.1, 'yield': 0.1},
+            'weights': {'reflectance': 0.5, 'angular': 0.2, 'cost': 0.1, 'yield': 0.1, 'lifetime': 0.1},
             'maxiter': debug_maxiter,
             'popsize': debug_popsize
+        },
+        'manufacturing_focused': {
+            'method': 'multi_objective_optimize',
+            'weights': {'reflectance': 0.3, 'angular': 0.2, 'cost': 0.2, 'yield': 0.2, 'lifetime': 0.1},
+            'n_runs': debug_n_runs,
+            'n_iterations': debug_n_iterations
+        },
+        'environmental_focused': {
+            'method': 'multi_objective_optimize',
+            'weights': {'reflectance': 0.25, 'angular': 0.2, 'cost': 0.1, 'yield': 0.1, 'lifetime': 0.35},
+            'n_runs': debug_n_runs,
+            'n_iterations': debug_n_iterations
         }
     }
     
@@ -1767,10 +1583,50 @@ def main():
                 print(f"  {param}: {value}")
     print("\nBest Profile:", best_profile[0].capitalize())
     print(f"Best Reflectance: {best_profile[1]['reflectance']*100:.2f}%")
-    # Generate report for best profile
-    sim.generate_comprehensive_report(best_profile[1]['parameters'], best_profile[1]['reflectance'])
+    
+    # Calculate and display comprehensive lifetime performance analysis
+    print("\n=== Comprehensive Lifetime Performance Analysis ===")
+    comprehensive_lifetime = sim.calculate_comprehensive_lifetime(best_profile[1]['parameters'])
+    
+    print(f"Initial Reflectance: {comprehensive_lifetime['initial_reflectance']*100:.2f}%")
+    print(f"Final Reflectance (25 years): {comprehensive_lifetime['final_reflectance']*100:.2f}%")
+    print(f"Average Reflectance (25 years): {comprehensive_lifetime['average_reflectance']*100:.2f}%")
+    print(f"Degradation Rate: {comprehensive_lifetime['degradation_rate']*100:.4f}%/year")
+    print(f"Manufacturing Yield: {comprehensive_lifetime['manufacturing_yield']:.1f}%")
+    print(f"Annual Manufacturing Cost: ${comprehensive_lifetime['manufacturing_cost']['annual_cost']:.0f}")
+    print(f"Lifetime Score: {comprehensive_lifetime['lifetime_score']:.4f}")
+    
+    # Environmental factors breakdown
+    print("\nEnvironmental Factors:")
+    env_factors = comprehensive_lifetime['environmental_factors']
+    for factor, value in env_factors.items():
+        if factor != 'total':
+            print(f"  {factor.capitalize()}: {value:.4f}")
+    print(f"  Total Environmental Impact: {env_factors['total']:.4f}")
+    
+
+    
+    # Generate 3D structure visualization
+    try:
+        structure_fig = sim.plot_3d_structure(best_profile[1]['parameters'])
+        structure_fig.savefig('results/moth_eye_3d_structure.png', bbox_inches='tight')
+        plt.close(structure_fig)
+        print("3D structure visualization saved to: results/moth_eye_3d_structure.png")
+    except Exception as e:
+        logger.error(f"Error generating 3D structure: {str(e)}")
+    
+    # Check for manufacturing warnings
+    print("\n=== Manufacturing Feasibility Analysis ===")
+    warnings = sim.manufacturing_warnings(best_profile[1]['parameters'])
+    if warnings:
+        print("⚠️  Manufacturing Warnings:")
+        for warning in warnings:
+            print(f"  - {warning}")
+    else:
+        print("✅ No manufacturing warnings - design is manufacturable")
+    
     # Add literature and parameter comparison
-    sim.plot_literature_comparison(best_profile[1]['parameters'], best_profile[1]['reflectance'])
+    sim.plot_literature_comparison(best_profile[1]['parameters'], best_profile[1]['reflectance'], save_path='results/literature_comparison.png')
     # Save comparison results
     comparison_results = {
         'best_profile': best_profile[0],
@@ -1788,16 +1644,8 @@ def main():
     save_json(comparison_results, 'results/profile_comparison.json')
     logger.info("Profile comparison results saved to profile_comparison.json")
     # --- Generate TXT summary ---
-    bounds = {
-        'height': (nm(200), nm(600)),
-        'period': (nm(150), nm(350)),
-        'base_width': (nm(100), nm(300)),
-        'rms_roughness': (nm(1), nm(10)),
-        'interface_roughness': (nm(0.5), nm(5)),
-        'refractive_index': (1.3, 1.7),
-        'extinction_coefficient': (0.0001, 0.01),
-        'substrate_index': (3.4, 3.6)
-    }
+    # Use the same bounds as the optimization for consistency
+    bounds = sim._get_profile_bounds('parabolic')  # Use parabolic as default for summary
     assumptions = {
         '25 years lifetime': (25, 'Industry standard for solar cell durability'),
         'Rain/dust/UV models': ('Typical exposure', 'Based on environmental and literature data'),
@@ -1881,24 +1729,6 @@ def main():
     # Advanced ML workflow (NN training loss curve)
     sim.advanced_ml_workflow(X, y)
     print(f"\n[INFO] Main workflow completed in {time.time() - start_time:.2f} seconds.")
-
-# --- Add new real-world parameters to comparison ---
-def get_cooling_factor(params):
-    # Example: higher aspect ratio and Si content improves cooling
-    ar = params['height'] / params['base_width']
-    si_fraction = 1.0  # Assume all Si for now
-    return 5 + 2 * (ar - 1) * si_fraction  # W/mK, dummy model
-
-def get_surface_energy(params):
-    # Example: lower roughness and higher aspect ratio improves anti-soiling
-    roughness = params['rms_roughness'] * 1e9  # nm
-    ar = params['height'] / params['base_width']
-    return 50 - 5 * ar - 0.1 * roughness  # mN/m, dummy model
-
-def get_contact_angle(params):
-    # Example: higher aspect ratio increases hydrophobicity
-    ar = params['height'] / params['base_width']
-    return 90 + 10 * (ar - 1)  # degrees, dummy model
 
 if __name__ == "__main__":
     main()

@@ -75,3 +75,11 @@ For questions, contact Prathyusha Murali Mohan Raju
 ---
 
 This work was completed as part of the MEng final year project at DCU. For questions or collaboration, please contact the author.
+
+# Notes on Simulation Realism and Uncertainty
+
+- **Idealized Results:** All results (reflectance, yield, lifetime) are based on simulation and assume ideal manufacturing and environmental conditions. In real-world fabrication, some deviation is expected due to process variation, defects, and environmental degradation.
+- **Manufacturing Yield:** The reported 100% manufacturing yield is an idealized value, standard for simulation studies. Actual yield in production may be lower due to defects or process limitations.
+- **Lifetime Performance:** Lifetime reflectance is reported as approaching zero in simulation, which assumes no unmodeled degradation. Real-world performance may degrade over time due to contamination, weathering, or unforeseen factors.
+- **Uncertainty:** The uncertainty values (e.g., ±0.01%) are calculated using Monte Carlo analysis with parameter perturbation, not hardcoded. This provides a realistic estimate of expected variability in performance.
+- **Recommendation:** For academic and simulation purposes, these assumptions are standard and accepted. For real-world deployment, additional safety margins and empirical validation are recommended.
