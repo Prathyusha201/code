@@ -1113,10 +1113,6 @@ class MothEyeSimulator:
         ax.set_title('3D View of Best Moth-Eye Structure')
         return fig
 
-
-
-
-
     def generate_txt_summary(self, best_params, best_R, bounds, assumptions, results, moth_eye_params=None, traditional_params=None, input_params=None):
         """Generate a well-formatted plain text summary file with all required information, including a parameter comparison table."""
         ensure_dir('results')
@@ -1603,8 +1599,6 @@ def main():
         if factor != 'total':
             print(f"  {factor.capitalize()}: {value:.4f}")
     print(f"  Total Environmental Impact: {env_factors['total']:.4f}")
-    
-
     
     # Generate 3D structure visualization
     try:
