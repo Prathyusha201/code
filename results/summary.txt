@@ -41,20 +41,20 @@
   Note: Results include realistic manufacturing variability (±2%) and environmental noise (±1%)
         These are simulation-based values; real-world performance may vary due to additional factors.
   Lifetime Performance:
-    - Initial Reflectance: 0.26%
-    - 25-Year Reflectance: 0.00%
-    - Average Reflectance: 0.00%
-    - Degradation Rate: 0.0000%/year
+    - Initial Reflectance: 0.25%
+    - 25-Year Reflectance: 0.25%
+    - Average Reflectance: 0.25%
+    - Degradation Rate: 0.0101%/year
   Manufacturing Warnings: None (design is manufacturable)
   Parameters:
-    - height              : 280.10 nm
-    - period              : 299.17 nm
-    - base_width          : 229.47 nm
-    - rms_roughness       : 2.03 nm
-    - interface_roughness : 2.54 nm
-    - refractive_index    : 1.4045
-    - extinction_coefficient: 3.04 mm
-    - substrate_index     : 3.4145
+    - height              : 288.85 nm
+    - period              : 295.35 nm
+    - base_width          : 233.91 nm
+    - rms_roughness       : 2.05 nm
+    - interface_roughness : 2.27 nm
+    - refractive_index    : 1.4122
+    - extinction_coefficient: 1.97 mm
+    - substrate_index     : 3.5081
     - manufacturing_method: Interference lithography or soft lithography (cost-effective for large area)
     - manufacturing_yield : 100
 
@@ -64,12 +64,12 @@ All graphs and detailed reports are saved in the 'results' folder as images.
 +-------------------------------+----------------------+----------------------+
 | Parameter                      | Moth-Eye              | Traditional           |
 +-------------------------------+----------------------+----------------------+
-| Reflectance (%)                | 0.25                  | 9.20                  |
+| Reflectance (%)                | 0.26                  | 9.20                  |
 | Angular Tolerance (deg)        | 60                    | 20                    |
 | Spectral Bandwidth (nm)        | 800                   | 400                   |
 | Manufacturing Cost ($/wafer)   | 100                   | 50                    |
-| Min Feature Size (nm)          | 229.47                | 100                   |
-| Aspect Ratio                   | 1.22                  | 1.00                  |
+| Min Feature Size (nm)          | 233.91                | 100                   |
+| Aspect Ratio                   | 1.23                  | 1.00                  |
 | Manufacturing Method           | Interference          | Interference          |
 |                                | lithography or soft   | lithography           |
 |                                | lithography (cost-    |                       |

@@ -436,15 +436,38 @@ class MothEyeSimulator:
 
     def double_layer_reflectance(self):
         """
-        Double-layer AR coating reflectance using Fresnel equations.
-        Formula:
-            R = product of interface reflectances for each layer.
-        See: standard thin-film optics, e.g., Born & Wolf.
+        Realistic double-layer AR coating reflectance using the transfer matrix method and solar-spectrum-weighted averaging.
+        Uses SiO2 (n=1.45) and MgF2 (n=1.38) as typical AR materials, each with quarter-wavelength thickness at 550 nm.
         """
-        n1 = (self.n_air*self.n_si)**(1/3) # Effective index of first layer
-        n2 = (self.n_air*self.n_si)**(2/3) # Effective index of second layer
-        R = ((self.n_air-n1)/(self.n_air+n1))**2 * ((n1-n2)/(n1+n2))**2 * ((n2-self.n_si)/(n2+self.n_si))**2 # Fresnel formula for double layer reflectance
-        return R # Returns the reflectance
+        n_air = self.n_air
+        n1 = 1.38  # MgF2
+        n2 = 1.45  # SiO2
+        n_si = self.n_si
+        wl0 = 550e-9  # Design wavelength (550 nm)
+        d1 = wl0 / (4 * n1)
+        d2 = wl0 / (4 * n2)
+        wavelengths = self.wavelengths
+        R = []
+        for wl in wavelengths:
+            # Calculate phase thickness for each layer
+            delta1 = 2 * np.pi * n1 * d1 / wl
+            delta2 = 2 * np.pi * n2 * d2 / wl
+            # Characteristic matrices for each layer
+            M1 = np.array([[np.cos(delta1), 1j*np.sin(delta1)/n1], [1j*n1*np.sin(delta1), np.cos(delta1)]], dtype=complex)
+            M2 = np.array([[np.cos(delta2), 1j*np.sin(delta2)/n2], [1j*n2*np.sin(delta2), np.cos(delta2)]], dtype=complex)
+            # Total transfer matrix: M = M1 @ M2
+            M = M1 @ M2
+            # Calculate reflection coefficient
+            num = (M[0,0] + M[0,1]*n_si) * n_air - (M[1,0] + M[1,1]*n_si)
+            den = (M[0,0] + M[0,1]*n_si) * n_air + (M[1,0] + M[1,1]*n_si)
+            r = num / den
+            Rval = np.abs(r)**2
+            R.append(Rval)
+        # Solar spectrum weighting
+        S = self.solar_spectrum(wavelengths)
+        S = S / np.sum(S)
+        weighted = np.sum(np.array(R) * S)
+        return weighted
 
     def gradient_index_reflectance(self):
         """Calculate reflectance for gradient-index coating using transfer matrix method."""
@@ -693,40 +716,39 @@ class MothEyeSimulator:
         env_factor = self.calculate_environmental_impact(params)['total']
         R = base_R * env_factor  # This is "starting" reflectance after baseline environmental effects
         
-        # Enhanced time-dependent degradation with realistic coefficients
         years = 25
         monthly_R = []
-        
+
         # Realistic degradation coefficients (based on literature)
-        temp_coeff = 0.001  # per Kelvin
+        temp_coeff = 0.001  # per Kelvin or 0.005
         uv_coeff = 0.0001   # per hour of UV exposure
-        dust_coeff = 0.0005 # per micrometer of dust
-        rain_coeff = 0.001  # per year of rain exposure
-        
+        dust_coeff = 0.0005 # per micrometer of dust or 0.002
+        rain_coeff = 0.001  # per year or 0.005
+
         for year in range(years):
             for month in range(12):
                 # Temperature cycling effect (seasonal variation)
                 temp_variation = 20 * np.sin(2 * np.pi * (year * 12 + month) / 12)  # ±20K seasonal
-                temp_factor = 1.0 + temp_coeff * temp_variation
-                
+                temp_factor = 1.0 + abs(temp_coeff * temp_variation)  # Always increases reflectance
+
                 # UV exposure effect (varies with season and latitude)
                 uv_hours = 4 + 2 * np.sin(2 * np.pi * (year * 12 + month) / 12)  # 2-6 hours/day
-                uv_factor = 1.0 + uv_coeff * uv_hours * 365.25 / 12  # Monthly UV dose
-                
+                uv_factor = 1.0 + abs(uv_coeff * uv_hours * 365.25 / 12)  # Always increases reflectance
+
                 # Dust accumulation (progressive buildup)
                 dust_thickness = dust_coeff * (year * 12 + month) * 0.1  # μm/month
-                dust_factor = 1.0 + dust_thickness
-                
+                dust_factor = 1.0 + abs(dust_thickness)  # Always increases reflectance
+
                 # Rain erosion (cumulative effect)
-                rain_factor = 1.0 + rain_coeff * (year + month/12)
-                
+                rain_factor = 1.0 + abs(rain_coeff * (year + month/12))  # Always increases reflectance
+
                 # Apply cumulative degradation with realistic bounds
                 current_R = R * temp_factor * uv_factor * dust_factor * rain_factor
+                # Ensure reflectance never drops below initial value
+                current_R = max(current_R, base_R)
                 current_R = min(current_R, 1.0)  # Ensure reflectance doesn't exceed 100%
-                current_R = max(current_R, 0.0)  # Ensure reflectance doesn't go negative
-                
                 monthly_R.append(current_R)
-        
+
         return {
             'initial_reflectance': base_R,
             'baseline_env_reflectance': R,
