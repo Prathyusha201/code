@@ -37,26 +37,28 @@
 
 ## Results
   Best Profile        : conical
-  Best Reflectance (%) : 0.25 ± 0.01 (N=100, 5% parameter variation)
+  Best Reflectance (%) : 0.07 ± 0.00 (N=100, 5% parameter variation)
   Note: Results include realistic manufacturing variability (±2%) and environmental noise (±1%)
         These are simulation-based values; real-world performance may vary due to additional factors.
   Lifetime Performance:
-    - Initial Reflectance: 0.25%
-    - 25-Year Reflectance: 0.25%
-    - Average Reflectance: 0.25%
-    - Degradation Rate: 0.0101%/year
+    - Initial Reflectance: 0.07%
+    - 25-Year Reflectance: 0.08%
+    - Average Reflectance: 0.08%
+    - Degradation Rate: 0.0032%/year
   Manufacturing Warnings: None (design is manufacturable)
   Parameters:
-    - height              : 288.85 nm
-    - period              : 295.35 nm
-    - base_width          : 233.91 nm
+    - height              : 288.64 nm
+    - period              : 299.04 nm
+    - base_width          : 232.83 nm
     - rms_roughness       : 2.05 nm
-    - interface_roughness : 2.27 nm
-    - refractive_index    : 1.4122
-    - extinction_coefficient: 1.97 mm
-    - substrate_index     : 3.5081
+    - interface_roughness : 1.10 nm
+    - refractive_index    : 1.4016
+    - extinction_coefficient: 4.31 mm
+    - substrate_index     : 3.4443
     - manufacturing_method: Interference lithography or soft lithography (cost-effective for large area)
     - manufacturing_yield : 100
+
+  Material Volume required for best moth-eye structure (unit cell): 4.096e-21 m^3 (0.004 µm^3)
 
 All graphs and detailed reports are saved in the 'results' folder as images.
 
@@ -64,12 +66,12 @@ All graphs and detailed reports are saved in the 'results' folder as images.
 +-------------------------------+----------------------+----------------------+
 | Parameter                      | Moth-Eye              | Traditional           |
 +-------------------------------+----------------------+----------------------+
-| Reflectance (%)                | 0.26                  | 9.20                  |
+| Reflectance (%)                | 0.07                  | 9.69                  |
 | Angular Tolerance (deg)        | 60                    | 20                    |
 | Spectral Bandwidth (nm)        | 800                   | 400                   |
 | Manufacturing Cost ($/wafer)   | 100                   | 50                    |
-| Min Feature Size (nm)          | 233.91                | 100                   |
-| Aspect Ratio                   | 1.23                  | 1.00                  |
+| Min Feature Size (nm)          | 232.83                | 100                   |
+| Aspect Ratio                   | 1.24                  | 1.00                  |
 | Manufacturing Method           | Interference          | Interference          |
 |                                | lithography or soft   | lithography           |
 |                                | lithography (cost-    |                       |

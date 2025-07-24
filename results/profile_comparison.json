@@ -1,65 +1,66 @@
 {
     "best_profile": "conical",
-    "best_reflectance": 0.002575103411094836,
+    "best_reflectance": 0.0007092081500340636,
     "all_results": {
         "parabolic": {
             "parameters": {
-                "height": 2.622423400328761e-07,
-                "period": 2.770759864279792e-07,
-                "base_width": 2.200995635219903e-07,
-                "rms_roughness": 2.014158587529241e-09,
-                "interface_roughness": 3.819529317765557e-09,
-                "refractive_index": 1.415832998977408,
-                "extinction_coefficient": 0.0023997006379362527,
-                "substrate_index": 3.483215801637974,
+                "height": 3.044290274459926e-07,
+                "period": 2.47218453349527e-07,
+                "base_width": 1.860973896940027e-07,
+                "rms_roughness": 2.549492439959805e-09,
+                "interface_roughness": 3.751940726386729e-09,
+                "refractive_index": 1.4273637261837921,
+                "extinction_coefficient": 0.004776068092193612,
+                "substrate_index": 3.489201154591591,
                 "profile_type": "parabolic"
             },
-            "reflectance": 0.004081287927740072
+            "reflectance": 0.0019528721294160348
         },
         "conical": {
             "parameters": {
-                "height": 2.888542861932276e-07,
-                "period": 2.953538440890664e-07,
-                "base_width": 2.3390861430314696e-07,
-                "rms_roughness": 2.049376627350961e-09,
-                "interface_roughness": 2.269893147352813e-09,
-                "refractive_index": 1.4121957942973358,
-                "extinction_coefficient": 0.001970777901611905,
-                "substrate_index": 3.508082025684847,
+                "height": 2.8864192617081025e-07,
+                "period": 2.9903649689908784e-07,
+                "base_width": 2.3282888798821276e-07,
+                "rms_roughness": 2.049808307161571e-09,
+                "interface_roughness": 1.0999495824534126e-09,
+                "refractive_index": 1.4015670212679,
+                "extinction_coefficient": 0.004307645417557842,
+                "substrate_index": 3.4443389505216135,
                 "profile_type": "conical",
                 "manufacturing_method": "Interference lithography or soft lithography (cost-effective for large area)",
                 "manufacturing_yield": 100.0
             },
-            "reflectance": 0.002575103411094836
+            "reflectance": 0.0007092081500340636
         },
         "gaussian": {
             "parameters": {
-                "height": 2.6461529650052456e-07,
-                "period": 2.8836580974578543e-07,
-                "base_width": 2.2819815355290636e-07,
-                "rms_roughness": 2.140134285603698e-09,
-                "interface_roughness": 2.264423744853614e-09,
-                "refractive_index": 1.4073705143691493,
-                "extinction_coefficient": 0.0018067480545577081,
-                "substrate_index": 3.467846314754821,
+                "height": 2.6037278518199947e-07,
+                "period": 2.8244753946877896e-07,
+                "base_width": 2.2466790070193164e-07,
+                "rms_roughness": 2.172420443653636e-09,
+                "interface_roughness": 2.8675867404347587e-09,
+                "refractive_index": 1.4003031571538154,
+                "extinction_coefficient": 0.004135743965254204,
+                "substrate_index": 3.4059410262075005,
                 "profile_type": "gaussian"
             },
-            "reflectance": 0.004565316735087789
+            "reflectance": 0.002445114852404935
         },
         "quintic": {
             "parameters": {
-                "height": 2.7214308872183293e-07,
-                "period": 2.9246391222070086e-07,
-                "base_width": 2.3001579392053423e-07,
-                "rms_roughness": 2.2219071124563984e-09,
-                "interface_roughness": 1.8538106797389447e-09,
-                "refractive_index": 1.4012235499287073,
-                "extinction_coefficient": 0.0016025536999876924,
-                "substrate_index": 3.4875466542881046,
+                "height": 2.87607006432279e-07,
+                "period": 2.936382493179745e-07,
+                "base_width": 2.328729254698067e-07,
+                "rms_roughness": 2.0806771911882127e-09,
+                "interface_roughness": 1.8582334039261761e-09,
+                "refractive_index": 1.4087854607221937,
+                "extinction_coefficient": 0.0026248707118539695,
+                "substrate_index": 3.5142827460120944,
                 "profile_type": "quintic"
             },
-            "reflectance": 0.005893236641256468
+            "reflectance": 0.004149817804735672
         }
     },
-    "timestamp": "2025-07-15T08:14:56.527915"
+    "material_volume_m3": 4.096396497192572e-21,
+    "timestamp": "2025-07-24T21:27:25.253048"
 }

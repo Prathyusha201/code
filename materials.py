@@ -26,6 +26,6 @@ class Material:
         Returns:
             tuple: (n, k) values.
         """
-        n = self.n_interp(wavelength_nm)
-        k = self.k_interp(wavelength_nm)
+        n = float(self.n_interp(wavelength_nm))
+        k = float(self.k_interp(wavelength_nm))
         return n, k 

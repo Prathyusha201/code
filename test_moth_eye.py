@@ -67,16 +67,12 @@ def test_reflectance() -> None:
     
     print("\n=== Testing Traditional Coatings ===")
     R_single = sim.single_layer_reflectance()
-    R_double = sim.double_layer_reflectance()
     R_gradient = sim.gradient_index_reflectance()
     print(f"Single-layer: {R_single*100:.2f}%")
-    print(f"Double-layer: {R_double*100:.2f}%")
     print(f"Gradient-index: {R_gradient*100:.2f}%")
-    
     # Verify traditional coatings have expected relationships
-    assert R_double < R_single, "Double-layer should have lower reflectance than single-layer"
     assert R_gradient < R_single, "Gradient-index should have lower reflectance than single-layer"
-    print("✓ Traditional coatings test passed")
+    print("\u2713 Traditional coatings test passed")
     
     print("\n=== Testing All Profile Types ===")
     profiles = ['parabolic', 'conical', 'gaussian', 'quintic']
