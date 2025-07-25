@@ -1009,7 +1009,7 @@ class MothEyeSimulator:
             'Nanoimprint Litho. (2012)', 'Advanced Meshing (2017)', 'Parameter Optimization (2011)'
         ]
         literature_reflectance = [4.5, 2.5, 3.0, 10.0, 12.0, 3.0, 6.0, 5.0, 4.0, 1.5]
-        moth_eye_reflectance = max(best_R * 100, 0.2)  # Use actual best reflectance
+        moth_eye_reflectance = best_R * 100
         traditional_reflectance = self.single_layer_reflectance() * 100
         methods = ['Moth-Eye (This Work)', 'Traditional (This Work)'] + literature_methods
         reflectance = [moth_eye_reflectance, traditional_reflectance] + literature_reflectance
