@@ -547,19 +547,6 @@ class MothEyeSimulator:
         plt.savefig(f'{fname_prefix}_spectral.png')
         plt.close()
 
-        # Angular
-        angles = np.linspace(0, 80, 10)
-        # Add a slight monotonic increase for realism
-        R_ang = [self.weighted_reflectance({**best_params, 'profile_type': best_params['profile_type']}) * (1 + 0.002 * theta) for theta in angles]
-        plt.figure()
-        plt.plot(angles, np.array(R_ang)*100)
-        plt.xlabel('Angle (deg)')
-        plt.ylabel('Weighted Reflectance (%)')
-        plt.title('Angular Performance')
-        plt.grid()
-        plt.savefig(f'{fname_prefix}_angular.png')
-        plt.close()
-
         # Profile shape
         z = np.linspace(0, 1, 100)
         for pt in ['parabolic','conical','gaussian','quintic']:
