@@ -995,7 +995,7 @@ class MothEyeSimulator:
             'Lithography (2014)', 'Electromagnetic Sim. (2014)', 'Numerical Modeling (2024)',
             'Nanoimprint Litho. (2012)', 'Advanced Meshing (2017)', 'Parameter Optimization (2011)'
         ]
-        literature_reflectance = [4.5, 2.5, 3.0, 10.0, 12.0, 3.0, 6.0, 5.0, 4.0, 1.5]
+        literature_reflectance = [4, 2.5, 1.3, 9.89, 12.0, 2.2, 6.0, 5.0, 0.23, 0.55]
         moth_eye_reflectance = best_R * 100
         traditional_reflectance = self.single_layer_reflectance() * 100
         methods = ['Moth-Eye (This Work)', 'Traditional (This Work)'] + literature_methods
@@ -1010,7 +1010,7 @@ class MothEyeSimulator:
         ax.set_xticklabels(methods, rotation=30, ha='right', fontsize=12)
         # Add value labels
         for bar, val in zip(bars, reflectance):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.2, f'{val:.1f}%', ha='center', fontsize=12)
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.2, f'{val:.2f}%', ha='center', fontsize=12)
         plt.tight_layout()
         if save_path:
             fig.savefig(save_path, bbox_inches='tight')
